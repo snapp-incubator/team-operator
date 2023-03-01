@@ -19,12 +19,15 @@ package controllers
 import (
 	"context"
 
+	teamv1alpha1 "github.com/AnisHamidi/team-operator/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	teamv1alpha1 "github.com/AnisHamidi/team-operator/api/v1alpha1"
 )
 
 // TeamReconciler reconciles a Team object
@@ -47,9 +50,42 @@ type TeamReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.13.0/pkg/reconcile
 func (r *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	log := log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	team := &teamv1alpha1.Team{}
+
+	err := r.Client.Get(ctx, req.NamespacedName, team)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Info("team resource not found. Ignoring since the object must be deleted")
+			return ctrl.Result{}, nil
+		}
+		log.Error(err, "Failed to get team")
+		return ctrl.Result{}, err
+	}
+
+	teamName := team.GetName()
+
+	// adding team label for each namespace in team spec
+	for _, ns := range team.Spec.Namespaces {
+		namespace := &corev1.Namespace{}
+
+		err := r.Client.Get(ctx, types.NamespacedName{Name: ns}, namespace)
+		if err != nil {
+			log.Error(err, "failed to get namespace")
+			return ctrl.Result{}, err
+		}
+		namespace.Labels["snappcloud.io/team"] = teamName
+		namespace.Labels["snappcloud.io/datasource"] = "true"
+
+		err = r.Client.Update(ctx, namespace)
+		if err != nil {
+			log.Error(err, "failed to update namespace")
+			return ctrl.Result{}, err
+
+		}
+
+	}
 
 	return ctrl.Result{}, nil
 }
