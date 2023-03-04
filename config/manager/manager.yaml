@@ -70,7 +70,7 @@ spec:
         - /manager
         args:
         - --leader-elect
-        image: anishamidi/operator-team-new:1.0
+        image: ghcr.io/snapp-incubator/team-operator:v0.1.0
         name: manager
         securityContext:
           allowPrivilegeEscalation: false
