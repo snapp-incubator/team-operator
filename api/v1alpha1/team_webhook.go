@@ -54,7 +54,9 @@ var teamns corev1.Namespace
 func (r *Team) ValidateCreate() error {
 	teamlog.Info("validate create", "name", r.Name)
 	clientset, err := getClinet()
-
+        if err != nil {
+           return errors.New("fail to get clinet,can't not update team object")
+        }
 	for _, ns := range r.Spec.Namespaces {
 
 		//check if namespace does not exist or has been deleted
@@ -83,7 +85,9 @@ func (r *Team) ValidateUpdate(old runtime.Object) error {
 	teamlog.Info("validate update", "name", r.Name)
 
 	clientset, err := getClinet()
-
+        if err != nil {
+           return errors.New("fail to get clinet,can't not update team object")
+        }
 	for _, ns := range r.Spec.Namespaces {
 
 		//check if namespace does not exist or has been deleted
@@ -125,7 +129,7 @@ func (r *Team) ValidateUpdate(old runtime.Object) error {
 				exists = true
 			}
 		}
-		if exists == false {
+		if !exists {
 			return errors.New("you can not remove the namespaces which have team label.")
 		}
 
