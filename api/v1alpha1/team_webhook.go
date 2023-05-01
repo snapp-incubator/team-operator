@@ -35,10 +35,8 @@ import (
 // log is for logging in this package.
 var teamlog = logf.Log.WithName("team-resource")
 
-func (r *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(r).
-		Complete()
+func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewWebhookManagedBy(mgr).For(t).Complete()
 }
 
 // TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -51,80 +49,77 @@ func (r *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 var _ webhook.Validator = &Team{}
 var teamns corev1.Namespace
 
-func (r *Team) ValidateCreate() error {
-	teamlog.Info("validate create", "name", r.Name)
-	clientset, err := getClinet()
-        if err != nil {
-           return errors.New("fail to get clinet,can't not update team object")
-        }
-	for _, ns := range r.Spec.Namespaces {
-
+func (t *Team) ValidateCreate() error {
+	teamlog.Info("validate create", "name", t.Name)
+	clientSet, err := getClient()
+	if err != nil {
+		return errors.New("fail to get client,can't update team object")
+	}
+	for _, ns := range t.Spec.Namespaces {
 		//check if namespace does not exist or has been deleted
-		teamns, err = nsExists(ns, clientset)
+		teamns, err = nsExists(ns, clientSet)
 		if err != nil {
 			return err
 		}
 
 		//check if namespace already has been added to another team
-		err = nsHasTeam(r, &teamns)
+		err = nsHasTeam(t, &teamns)
 		if err != nil {
 			return err
 		}
 
 		//Check If user has access to this namespace
-		err = teamAdminAccess(r, ns, clientset)
+		err = teamAdminAccess(t, ns, clientSet)
 		if err != nil {
 			return err
 		}
-
 	}
 	return nil
 }
 
-func (r *Team) ValidateUpdate(old runtime.Object) error {
-	teamlog.Info("validate update", "name", r.Name)
+func (t *Team) ValidateUpdate(old runtime.Object) error {
+	teamlog.Info("validate update", "name", t.Name)
 
-	clientset, err := getClinet()
-        if err != nil {
-           return errors.New("fail to get clinet,can't not update team object")
-        }
-	for _, ns := range r.Spec.Namespaces {
-
+	clientSet, err := getClient()
+	if err != nil {
+		return errors.New("fail to get clinet,can't not update team object")
+	}
+	for _, ns := range t.Spec.Namespaces {
 		//check if namespace does not exist or has been deleted
-		teamns, err = nsExists(ns, clientset)
+		teamns, err = nsExists(ns, clientSet)
 		if err != nil {
 			return err
 		}
 
 		//check if namespace already has been added to another team
-		err = nsHasTeam(r, &teamns)
+		err = nsHasTeam(t, &teamns)
 		if err != nil {
 			return err
 		}
 
 		//Check If user has access to this namespace
-		err = teamAdminAccess(r, ns, clientset)
+		err = teamAdminAccess(t, ns, clientSet)
 		if err != nil {
 			return err
 		}
 	}
 
-	//prevent deleting a namespace that have the teamlabel
+	//prevent deleting a namespace that have the team label
 
-	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"snappcloud.io/team": r.Name}}
+	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"snappcloud.io/team": t.Name}}
 
 	listOptions := metav1.ListOptions{
 		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
 		Limit:         100,
 	}
-	namespaces, err := clientset.CoreV1().Namespaces().List(context.TODO(), listOptions)
+	namespaces, err := clientSet.CoreV1().Namespaces().List(context.TODO(), listOptions)
 	if err != nil {
-		teamlog.Error(err, "can not get namesapces")
+		teamlog.Error(err, "can not get namespaces")
 	}
 
 	for _, ni := range namespaces.Items {
 		exists := false
-		for _, ns := range r.Spec.Namespaces {
+		for _, ns := range t.Spec.Namespaces {
 			if ni.Name == ns {
 				exists = true
 			}
@@ -132,54 +127,48 @@ func (r *Team) ValidateUpdate(old runtime.Object) error {
 		if !exists {
 			return errors.New("you can not remove the namespaces which have team label.")
 		}
-
 	}
 	return nil
 }
 
-func (r *Team) ValidateDelete() error {
-	teamlog.Info("validate delete", "name", r.Name)
+func (t *Team) ValidateDelete() error {
+	teamlog.Info("validate delete", "name", t.Name)
 	return nil
 }
 
-func getClinet() (c kubernetes.Clientset, err error) {
+func getClient() (c kubernetes.Clientset, err error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		teamlog.Error(err, "can not get incluster config.")
-		return c, errors.New("something is wrong please contact the cloud team.")
-
+		teamlog.Error(err, "can not get in-cluster config.")
+		return c, errors.New("something is wrong please contact the cloud team")
 	}
 
-	clientset, err := kubernetes.NewForConfig(config)
+	clientSet, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		teamlog.Error(err, "can not create clientset")
-		return *clientset, errors.New("something is wrong please contact cloud team")
-
+		teamlog.Error(err, "can not create clientSet")
+		return *clientSet, errors.New("something is wrong please contact cloud team")
 	}
-	return *clientset, nil
-
+	return *clientSet, nil
 }
 
 func nsExists(ns string, c kubernetes.Clientset) (tns corev1.Namespace, err error) {
-	teamns, err := c.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
+	teamNS, errNSGet := c.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
 
-	if err != nil {
-		errorresp := "namespace " + ns + " does not exist or has been deleted."
-		return *teamns, errors.New(errorresp)
+	if errNSGet != nil {
+		errorResp := "namespace " + ns + " does not exist or has been deleted."
+		return *teamNS, errors.New(errorResp)
 	}
-	return *teamns, nil
+	return *teamNS, nil
 }
 
 func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 	if val, ok := tns.Labels["snappcloud.io/team"]; ok {
 		if tns.Labels["snappcloud.io/team"] != r.Name {
-			errorresp := "namespace " + tns.Name + " already have the team label " + val
-			return errors.New(errorresp)
+			errorResp := "namespace " + tns.Name + " already have the team label " + val
+			return errors.New(errorResp)
 		}
-
 	}
 	return nil
-
 }
 
 func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
@@ -198,12 +187,12 @@ func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
 		},
 	}
 
-	resp, err := c.AuthorizationV1().
+	resp, errAuth := c.AuthorizationV1().
 		LocalSubjectAccessReviews(ns).
 		Create(context.TODO(), &check, metav1.CreateOptions{})
 
-	if err != nil {
-		teamlog.Error(err, "can not create role binding.")
+	if errAuth != nil {
+		teamlog.Error(errAuth, "can not create role binding.")
 	}
 	if !resp.Status.Allowed {
 		return errors.New("you are not allowed to add namespace. " + ns)

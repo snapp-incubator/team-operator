@@ -2,11 +2,14 @@ apiVersion: team.snappcloud.io/v1alpha1
 kind: Team
 metadata:
   labels:
-    app.kubernetes.io/name: team
+    app.kubernetes.io/name: alpha_team
     app.kubernetes.io/instance: team-sample
     app.kubernetes.io/part-of: team-operator
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/created-by: team-operator
   name: team-sample
 spec:
-  # TODO(user): Add fields here
+  teamAdmin: "user-test"
+  namespaces:
+    - "test-ns-1"
+    - "test-ns-2"
