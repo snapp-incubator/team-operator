@@ -17,10 +17,12 @@ limitations under the License.
 package controllers
 
 import (
+	"k8s.io/client-go/kubernetes"
 	"path/filepath"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
 	"k8s.io/client-go/kubernetes/scheme"
@@ -30,7 +32,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	teamv1alpha1 "github.com/AnisHamidi/team-operator/api/v1alpha1"
+	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -71,10 +73,31 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
+	K8sClientset, err := kubernetes.NewForConfig(cfg)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(K8sClientset).NotTo(BeNil())
+
+	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme: scheme.Scheme,
+	})
+	Expect(err).ToNot(HaveOccurred())
+	Expect(k8sManager).NotTo(BeNil())
+
+	err = (&TeamReconciler{
+		Client: k8sManager.GetClient(),
+		Scheme: k8sManager.GetScheme(),
+	}).SetupWithManager(k8sManager)
+	Expect(err).ToNot(HaveOccurred())
+
+	go func() {
+		err = k8sManager.Start(ctrl.SetupSignalHandler())
+		Expect(err).ToNot(HaveOccurred())
+	}()
 })
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
+	_ = testEnv.Stop()
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })

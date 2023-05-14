@@ -31,8 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	teamv1alpha1 "github.com/AnisHamidi/team-operator/api/v1alpha1"
-	"github.com/AnisHamidi/team-operator/controllers"
+	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
+	"github.com/snapp-incubator/team-operator/controllers"
 	//+kubebuilder:scaffold:imports
 )
 
