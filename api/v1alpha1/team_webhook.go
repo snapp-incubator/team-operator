@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -53,7 +54,7 @@ func (t *Team) ValidateCreate() error {
 	teamlog.Info("validate create", "name", t.Name)
 	clientSet, err := getClient()
 	if err != nil {
-		return errors.New("fail to get client,can't update team object")
+		return errors.New("could not create client, failed to update team object")
 	}
 	for _, ns := range t.Spec.Namespaces {
 		//check if namespace does not exist or has been deleted
@@ -82,7 +83,7 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 
 	clientSet, err := getClient()
 	if err != nil {
-		return errors.New("fail to get clinet,can't not update team object")
+		return errors.New("fail to get client, failed to update team object")
 	}
 	for _, ns := range t.Spec.Namespaces {
 		//check if namespace does not exist or has been deleted
@@ -114,7 +115,7 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 	}
 	namespaces, err := clientSet.CoreV1().Namespaces().List(context.TODO(), listOptions)
 	if err != nil {
-		teamlog.Error(err, "can not get namespaces")
+		teamlog.Error(err, "can not get list of namespaces")
 	}
 
 	for _, ni := range namespaces.Items {
@@ -125,7 +126,8 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 			}
 		}
 		if !exists {
-			return errors.New("you can not remove the namespaces which have team label.")
+			errMessage := fmt.Sprintf("namespace %s has team label but does not exist in %s team", ni.Name, t.Name)
+			return errors.New(errMessage)
 		}
 	}
 	return nil
@@ -155,7 +157,7 @@ func nsExists(ns string, c kubernetes.Clientset) (tns corev1.Namespace, err erro
 	teamNS, errNSGet := c.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
 
 	if errNSGet != nil {
-		errorResp := "namespace " + ns + " does not exist or has been deleted."
+		errorResp := fmt.Sprintf("Error while getting namespace %s: %s", ns, errNSGet.Error())
 		return *teamNS, errors.New(errorResp)
 	}
 	return *teamNS, nil
@@ -164,7 +166,7 @@ func nsExists(ns string, c kubernetes.Clientset) (tns corev1.Namespace, err erro
 func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 	if val, ok := tns.Labels["snappcloud.io/team"]; ok {
 		if tns.Labels["snappcloud.io/team"] != r.Name {
-			errorResp := "namespace " + tns.Name + " already have the team label " + val
+			errorResp := fmt.Sprintf("namespace %s already has the team label %s", tns.Name, val)
 			return errors.New(errorResp)
 		}
 	}
@@ -192,10 +194,11 @@ func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
 		Create(context.TODO(), &check, metav1.CreateOptions{})
 
 	if errAuth != nil {
-		teamlog.Error(errAuth, "can not create role binding.")
+		teamlog.Error(errAuth, "team owner does not have permission to create role binding")
 	}
 	if !resp.Status.Allowed {
-		return errors.New("you are not allowed to add namespace. " + ns)
+		errMessage := fmt.Sprintf("team owner is not allowed to add namespace %s", ns)
+		return errors.New(errMessage)
 	}
 	return nil
 
