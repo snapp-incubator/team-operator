@@ -64,14 +64,14 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	err := t.Client.Get(ctx, req.NamespacedName, team)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			log.Info("team resource not found. Ignoring since the object must be deleted")
+			log.Info("team resource not found. Ignoring since the object must be deleted", "team", req.NamespacedName)
 			err = t.checkMetricNSForTeamIsDeleted(ctx, req)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, nil
 		}
-		log.Error(err, "Failed to get team")
+		log.Error(err, "Failed to get team", "team", req.NamespacedName)
 		return ctrl.Result{}, err
 	}
 
@@ -107,7 +107,7 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 		err := t.Client.Get(ctx, types.NamespacedName{Name: ns}, namespace)
 		if err != nil {
-			log.Error(err, "failed to get namespace")
+			log.Error(err, "failed to get namespace", "namespace", ns)
 			return ctrl.Result{}, err
 		}
 		namespace.Labels["snappcloud.io/team"] = teamName
@@ -115,7 +115,7 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 		err = t.Client.Update(ctx, namespace)
 		if err != nil {
-			log.Error(err, "failed to update namespace")
+			log.Error(err, "failed to update namespace", "namespace", ns)
 			return ctrl.Result{}, err
 		}
 	}
