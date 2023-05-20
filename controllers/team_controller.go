@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	MetricNamespaceSuffix    = "-metrics"
+	MetricNamespaceSuffix    = "-team"
 	MetricNamespaceFinalizer = "batch.finalizers.kubebuilder.io/metric-namespace"
 )
 
