@@ -142,13 +142,13 @@ func getClient() (c kubernetes.Clientset, err error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		teamlog.Error(err, "can not get in-cluster config.")
-		return c, errors.New("something is wrong please contact the cloud team")
+		return c, errors.New("something went wrong please contact the cloud team")
 	}
 
 	clientSet, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		teamlog.Error(err, "can not create clientSet")
-		return *clientSet, errors.New("something is wrong please contact cloud team")
+		return *clientSet, errors.New("something went wrong please contact cloud team")
 	}
 	return *clientSet, nil
 }
@@ -166,7 +166,7 @@ func nsExists(ns string, c kubernetes.Clientset) (tns corev1.Namespace, err erro
 func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 	if val, ok := tns.Labels["snappcloud.io/team"]; ok {
 		if tns.Labels["snappcloud.io/team"] != r.Name {
-			errorResp := fmt.Sprintf("namespace %s already has the team label %s", tns.Name, val)
+			errorResp := fmt.Sprintf("namespace %s already has the team label %s, please ask in cloud-support if you need to detach the namespace from previous team", tns.Name, val)
 			return errors.New(errorResp)
 		}
 	}
