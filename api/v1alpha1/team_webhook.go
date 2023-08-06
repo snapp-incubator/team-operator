@@ -197,7 +197,7 @@ func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
 		teamlog.Error(errAuth, "team owner does not have permission to create role binding")
 	}
 	if !resp.Status.Allowed {
-		errMessage := fmt.Sprintf("team owner is not allowed to add namespace %s", ns)
+		errMessage := fmt.Sprintf("team owner is not allowed to add namespace %s, please add %s as admin of the project with the followig command: oc policy add-role-to-user admin %s -n %s", ns, r.Spec.TeamAdmin, r.Spec.TeamAdmin, ns)
 		return errors.New(errMessage)
 	}
 	return nil
