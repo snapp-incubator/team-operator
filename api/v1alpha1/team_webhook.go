@@ -51,25 +51,26 @@ var _ webhook.Validator = &Team{}
 var teamns corev1.Namespace
 
 func (t *Team) ValidateCreate() error {
-	teamlog.Info("validate create", "name", t.Name)
+	teamlog.Info("validating team create", "name", t.GetName())
 	clientSet, err := getClient()
 	if err != nil {
+		teamlog.Error(err, "error happened while validating create", "namespace", t.GetNamespace(), "name", t.GetName())
 		return errors.New("could not create client, failed to update team object")
 	}
 	for _, ns := range t.Spec.Namespaces {
-		//check if namespace does not exist or has been deleted
-		teamns, err = nsExists(ns, clientSet)
+		// Check if namespace does not exist or has been deleted
+		teamns, err = nsExists(clientSet, t.Name, ns)
 		if err != nil {
 			return err
 		}
 
-		//check if namespace already has been added to another team
+		// Check if namespace already has been added to another team
 		err = nsHasTeam(t, &teamns)
 		if err != nil {
 			return err
 		}
 
-		//Check If user has access to this namespace
+		// Check If user has access to this namespace
 		err = teamAdminAccess(t, ns, clientSet)
 		if err != nil {
 			return err
@@ -79,15 +80,16 @@ func (t *Team) ValidateCreate() error {
 }
 
 func (t *Team) ValidateUpdate(old runtime.Object) error {
-	teamlog.Info("validate update", "name", t.Name)
+	teamlog.Info("validating team update", "name", t.GetName())
 
 	clientSet, err := getClient()
 	if err != nil {
+		teamlog.Error(err, "error happened while validating update", "namespace", t.GetNamespace(), "name", t.GetName())
 		return errors.New("fail to get client, failed to update team object")
 	}
 	for _, ns := range t.Spec.Namespaces {
 		//check if namespace does not exist or has been deleted
-		teamns, err = nsExists(ns, clientSet)
+		teamns, err = nsExists(clientSet, t.Name, ns)
 		if err != nil {
 			return err
 		}
@@ -126,7 +128,7 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 			}
 		}
 		if !exists {
-			errMessage := fmt.Sprintf("namespace %s has team label but does not exist in %s team", ni.Name, t.Name)
+			errMessage := fmt.Sprintf("namespace \"%s\" has team label but does not exist in \"%s\" team", ni.Name, t.Name)
 			return errors.New(errMessage)
 		}
 	}
@@ -153,11 +155,11 @@ func getClient() (c kubernetes.Clientset, err error) {
 	return *clientSet, nil
 }
 
-func nsExists(ns string, c kubernetes.Clientset) (tns corev1.Namespace, err error) {
+func nsExists(c kubernetes.Clientset, team, ns string) (tns corev1.Namespace, err error) {
 	teamNS, errNSGet := c.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
 
 	if errNSGet != nil {
-		errorResp := fmt.Sprintf("Error while getting namespace %s: %s", ns, errNSGet.Error())
+		errorResp := fmt.Sprintf("Error while getting namespace \"%s\" for team \"%s\". error: %s", ns, team, errNSGet.Error())
 		return *teamNS, errors.New(errorResp)
 	}
 	return *teamNS, nil
@@ -166,7 +168,7 @@ func nsExists(ns string, c kubernetes.Clientset) (tns corev1.Namespace, err erro
 func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 	if val, ok := tns.Labels["snappcloud.io/team"]; ok {
 		if tns.Labels["snappcloud.io/team"] != r.Name {
-			errorResp := fmt.Sprintf("namespace %s already has the team label %s, please ask in cloud-support if you need to detach the namespace from previous team", tns.Name, val)
+			errorResp := fmt.Sprintf("namespace \"%s\" inside the Namespaces of team \"%s\" already has the team label \"%s\", please ask in cloud-support if you need to detach the namespace from previous team", tns.Name, r.Name, val)
 			return errors.New(errorResp)
 		}
 	}
@@ -194,10 +196,10 @@ func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
 		Create(context.TODO(), &check, metav1.CreateOptions{})
 
 	if errAuth != nil {
-		teamlog.Error(errAuth, "team owner does not have permission to create role binding")
+		teamlog.Error(errAuth, "error happened while checking team owner permission")
 	}
 	if !resp.Status.Allowed {
-		errMessage := fmt.Sprintf("team owner is not allowed to add namespace %s, please add %s as admin of the project with the followig command: oc policy add-role-to-user admin %s -n %s", ns, r.Spec.TeamAdmin, r.Spec.TeamAdmin, ns)
+		errMessage := fmt.Sprintf("team owner \"%s\" is not allowed to add namespace \"%s\" to team \"%s\", please add \"%s\" as admin of the project with the followig command: oc policy add-role-to-user admin %s -n %s", r.Spec.TeamAdmin, ns, r.Name, r.Spec.TeamAdmin, r.Spec.TeamAdmin, ns)
 		return errors.New(errMessage)
 	}
 	return nil
