@@ -3,14 +3,19 @@ package v1alpha1
 import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var _ = Describe("", func() {
 	var (
-		fooTeamName      = "foo-team"
-		fooTeamAdminName = "foo-admin"
+		fooTeamName       = "foo-team"
+		fooTeamAdminName  = "foo-admin"
+		fooTeamNamespaces = []string{"default"}
 	)
 	var (
 		err error
@@ -54,36 +59,45 @@ var _ = Describe("", func() {
 			Expect(err).NotTo(BeNil())
 		})
 
-		//It("should fail if TeamAdmin does not exist", func() {
-		//	fooTeamTmp := &Team{
-		//		TypeMeta:   fooTeam.TypeMeta,
-		//		ObjectMeta: fooTeam.ObjectMeta,
-		//		Spec: TeamSpec{
-		//			TeamAdmin:  "not-existing-team-admin",
-		//			Namespaces: fooTeamNamespaces,
-		//		},
-		//	}
-		//	err = k8sClient.Create(ctx, fooTeamTmp)
-		//	Expect(err).NotTo(BeNil())
-		//})
-		//
-		//It("should fail if at least one namespace has team label from another team", func() {
-		//	ns := &corev1.Namespace{}
-		//	err = k8sClient.Get(ctx, types.NamespacedName{Name: fooTeamNamespaces[0]}, ns)
-		//	Expect(err).To(BeNil())
-		//	patch := []byte(`{"metadata":{"labels":{"snappcloud.io/team": "non-existing-team"}}}`)
-		//	err = k8sClient.Patch(ctx, ns, client.RawPatch(types.StrategicMergePatchType, patch))
-		//	Expect(err).To(BeNil())
-		//	fooTeamTmp := &Team{
-		//		TypeMeta:   fooTeam.TypeMeta,
-		//		ObjectMeta: fooTeam.ObjectMeta,
-		//		Spec: TeamSpec{
-		//			TeamAdmin:  fooTeamAdminName,
-		//			Namespaces: fooTeamNamespaces,
-		//		},
-		//	}
-		//	err = k8sClient.Create(ctx, fooTeamTmp)
-		//	Expect(err).NotTo(BeNil())
-		//})
+		It("should fail if TeamAdmin does not exist", func() {
+			ns := &v1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "foo-namespace",
+				},
+			}
+			err = k8sClient.Create(ctx, ns)
+			Expect(err).To(BeNil())
+			fooTeamTmp := &Team{
+				TypeMeta:   fooTeam.TypeMeta,
+				ObjectMeta: fooTeam.ObjectMeta,
+				Spec: TeamSpec{
+					TeamAdmin: "not-existing-team-admin",
+					Namespaces: []string{
+						"foo-namespace",
+					},
+				},
+			}
+			err = k8sClient.Create(ctx, fooTeamTmp)
+			Expect(err).NotTo(BeNil())
+		})
+
+		It("should fail if at least one namespace has team label from another team", func() {
+			ns := &corev1.Namespace{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: fooTeamNamespaces[0]}, ns)
+			Expect(err).To(BeNil())
+			patch := []byte(`{"metadata":{"labels":{"snappcloud.io/team": "non-existing-team"}}}`)
+			err = k8sClient.Patch(ctx, ns, client.RawPatch(types.StrategicMergePatchType, patch))
+			Expect(err).To(BeNil())
+			fooTeamTmp := &Team{
+				TypeMeta:   fooTeam.TypeMeta,
+				ObjectMeta: fooTeam.ObjectMeta,
+				Spec: TeamSpec{
+					TeamAdmin:  fooTeamAdminName,
+					Namespaces: fooTeamNamespaces,
+				},
+			}
+			err = k8sClient.Create(ctx, fooTeamTmp)
+			Expect(err).NotTo(BeNil())
+		})
 	})
 })
