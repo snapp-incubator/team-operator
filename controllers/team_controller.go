@@ -18,11 +18,14 @@ package controllers
 
 import (
 	"context"
+	"reflect"
+
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -90,6 +93,28 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	teamName := team.GetName()
+	// Get all namespaces with label "team:team-name"
+	namespaceList := &corev1.NamespaceList{}
+	labelSelector := labels.SelectorFromSet(labels.Set{"snappcloud.io/team": teamName})
+	err = t.Client.List(ctx, namespaceList, client.MatchingLabelsSelector{Selector: labelSelector})
+	if err != nil {
+		log.Error(err, "failed to list namespaces with label", "label", "snappcloud.io/team:team-name")
+		return ctrl.Result{}, err
+	}
+
+	var updatedNamespaces []string
+	for _, ns := range namespaceList.Items {
+		updatedNamespaces = append(updatedNamespaces, ns.Name)
+	}
+	// Update the Team object only if there are changes
+	if !reflect.DeepEqual(updatedNamespaces, team.Spec.Namespaces) {
+		team.Spec.Namespaces = updatedNamespaces
+		err = t.Client.Update(ctx, team)
+		if err != nil {
+			log.Error(err, "failed to update Team object with namespaces", "team", team.Name)
+			return ctrl.Result{}, err
+		}
+	}
 
 	errAddFinalizer := t.CheckMetricNSFinalizerIsAdded(ctx, team)
 	if errAddFinalizer != nil {
