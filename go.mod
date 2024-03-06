@@ -1,4 +1,4 @@
-module github.com/snapp-incubator/team-operator
+module github.com/snapp-incubator/team-operator/v2
 
 go 1.19
 
