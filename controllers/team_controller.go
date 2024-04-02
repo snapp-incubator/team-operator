@@ -134,9 +134,6 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 				if err := t.finalizeNamespace(ctx, req, namespace, team); err != nil {
 					return ctrl.Result{}, err
 				}
-				log.Info("before removing finizler")
-
-				// remove our finalizer from the list and update it.
 				controllerutil.RemoveFinalizer(namespace, teamFinalizer)
 				if err := t.Update(ctx, namespace); err != nil {
 					return ctrl.Result{}, err
@@ -214,7 +211,6 @@ func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 		var teamList teamv1alpha1.TeamList
 		if err := mgr.GetClient().List(ctx, &teamList, &client.ListOptions{}); err != nil {
-			// Handle error
 			log.Error(err, "Unable to list team resources")
 			return nil
 		}
@@ -249,13 +245,11 @@ func (t *TeamReconciler) finalizeNamespace(ctx context.Context, req ctrl.Request
 			break
 		}
 	}
-	// Remove the 'snappcloud.io/team' label from the namespace
-	_, ok := ns.Labels["snappcloud.io/team"]
-	if ok {
+	if _, ok := ns.Labels["snappcloud.io/team"]; ok {
 		delete(ns.Labels, "snappcloud.io/team")
-	}
-	if err := t.Client.Update(ctx, ns); err != nil {
-		return err
+		if err := t.Client.Update(ctx, ns); err != nil {
+			return err
+		}
 	}
 
 	if err := t.Client.Update(ctx, team); err != nil {
