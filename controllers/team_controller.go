@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -27,14 +28,20 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 const (
 	MetricNamespaceSuffix    = "-team"
 	MetricNamespaceFinalizer = "batch.finalizers.kubebuilder.io/metric-namespace"
+	teamFinalizer            = "team.snappcloud.io/cleanup-team"
 )
 
 // TeamReconciler reconciles a Team object
@@ -46,6 +53,9 @@ type TeamReconciler struct {
 //+kubebuilder:rbac:groups=team.snappcloud.io,resources=teams,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=team.snappcloud.io,resources=teams/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=team.snappcloud.io,resources=teams/finalizers,verbs=update
+//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups="",resources=namespaces/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups="",resources=namespaces/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -88,7 +98,6 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 		return ctrl.Result{}, nil
 	}
-
 	teamName := team.GetName()
 
 	errAddFinalizer := t.CheckMetricNSFinalizerIsAdded(ctx, team)
@@ -112,6 +121,28 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 		namespace.Labels["snappcloud.io/team"] = teamName
 		namespace.Labels["snappcloud.io/datasource"] = "true"
+
+		if namespace.ObjectMeta.DeletionTimestamp.IsZero() {
+			if !controllerutil.ContainsFinalizer(namespace, teamFinalizer) {
+				controllerutil.AddFinalizer(namespace, teamFinalizer)
+				if err := t.Update(ctx, namespace); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+		} else {
+			if controllerutil.ContainsFinalizer(namespace, teamFinalizer) {
+				if err := t.finalizeNamespace(ctx, req, namespace, team); err != nil {
+					return ctrl.Result{}, err
+				}
+				controllerutil.RemoveFinalizer(namespace, teamFinalizer)
+				if err := t.Update(ctx, namespace); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+
+			// Stop reconciliation as the item is being deleted
+			return ctrl.Result{}, nil
+		}
 
 		err = t.Client.Update(ctx, namespace)
 		if err != nil {
@@ -165,7 +196,66 @@ func (t *TeamReconciler) checkMetricNSForTeamIsDeleted(ctx context.Context, req 
 
 // SetupWithManager sets up the controller with the Manager.
 func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
+
+	labelPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		labels := obj.GetLabels()
+		_, exists := labels["snappcloud.io/team"]
+		return exists
+	})
+
+	mapFunc := func(a client.Object) []reconcile.Request {
+		ctx := context.Background()
+		log := log.FromContext(ctx)
+
+		var requests []reconcile.Request
+
+		var teamList teamv1alpha1.TeamList
+		if err := mgr.GetClient().List(ctx, &teamList, &client.ListOptions{}); err != nil {
+			log.Error(err, "Unable to list team resources")
+			return nil
+		}
+
+		for _, team := range teamList.Items {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      team.Name,
+					Namespace: team.Namespace,
+				},
+			})
+		}
+
+		return requests
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&teamv1alpha1.Team{}).
+		Watches(
+			&source.Kind{Type: &corev1.Namespace{}},
+			handler.EnqueueRequestsFromMapFunc(mapFunc),
+			builder.WithPredicates(labelPredicate),
+		).
 		Complete(t)
+}
+
+func (t *TeamReconciler) finalizeNamespace(ctx context.Context, req ctrl.Request, ns *corev1.Namespace, team *teamv1alpha1.Team) error {
+
+	for i, namespace := range team.Spec.Namespaces {
+		if namespace == ns.Name {
+			team.Spec.Namespaces = append(team.Spec.Namespaces[:i], team.Spec.Namespaces[i+1:]...)
+			break
+		}
+	}
+	if _, ok := ns.Labels["snappcloud.io/team"]; ok {
+		delete(ns.Labels, "snappcloud.io/team")
+		if err := t.Client.Update(ctx, ns); err != nil {
+			return err
+		}
+	}
+
+	if err := t.Client.Update(ctx, team); err != nil {
+		return err
+	}
+
+	return nil
+
 }
