@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	namespaces = []string{"test-ns-1", "test-ns-2"}
+	namespaces = []v1alpha1.NamespaceDef{{Name: "test-ns-1", Environment: "production"}, {Name: "test-ns-2", Environment: "staging"}}
 	teamAdmin  = "user-test"
 	teamName   = "test-cloud"
 )
@@ -39,7 +39,7 @@ var _ = Describe("Testing Team", func() {
 		for _, ns := range namespaces {
 			nsObj := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: ns,
+					Name: ns.Name,
 				},
 			}
 			err := k8sClient.Create(ctx, nsObj)
@@ -70,10 +70,11 @@ var _ = Describe("Testing Team", func() {
 		It("all namespaces should have the team and datasource labels", func() {
 			for _, ns := range namespaces {
 				nsObj := &corev1.Namespace{}
-				err := k8sClient.Get(ctx, types.NamespacedName{Name: ns}, nsObj)
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: ns.Name}, nsObj)
 				Expect(err).To(BeNil())
 				Expect(nsObj.ObjectMeta.Labels["snappcloud.io/team"]).To(Equal(teamName))
 				Expect(nsObj.ObjectMeta.Labels["snappcloud.io/datasource"]).To(Equal("true"))
+				Expect(nsObj.ObjectMeta.Labels["environment"]).To(Equal(ns.Environment))
 			}
 		})
 

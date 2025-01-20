@@ -37,11 +37,19 @@ spec:
             properties:
               namespaces:
                 items:
-                  type: string
+                  properties:
+                    environment:
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - environment
+                  - name
+                  type: object
                 type: array
               teamAdmin:
-                description: Foo is an example field of Team. Edit team_types.go to
-                  remove/update
+                description: 'INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
+                  Important: Run "make" to regenerate code after modifying this file'
                 type: string
             type: object
           status:

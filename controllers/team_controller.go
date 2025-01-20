@@ -18,6 +18,8 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -42,6 +44,8 @@ const (
 	MetricNamespaceSuffix    = "-team"
 	MetricNamespaceFinalizer = "batch.finalizers.kubebuilder.io/metric-namespace"
 	teamFinalizer            = "team.snappcloud.io/cleanup-team"
+	EnvironmentProduction    = "production"
+	EnvironmentStaging       = "staging"
 )
 
 // TeamReconciler reconciles a Team object
@@ -114,11 +118,20 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	for _, ns := range team.Spec.Namespaces {
 		namespace := &corev1.Namespace{}
 
-		err := t.Client.Get(ctx, types.NamespacedName{Name: ns}, namespace)
+		err := t.Client.Get(ctx, types.NamespacedName{Name: ns.Name}, namespace)
 		if err != nil {
 			log.Error(err, "failed to get namespace", "namespace", ns)
 			return ctrl.Result{}, err
 		}
+
+		valueCorrect, valueEmpty := t.EvaluateTeamEnvironmentValue(ns.Environment)
+		if !valueEmpty && valueCorrect {
+			namespace.Labels["environment"] = ns.Environment
+		} else if !valueEmpty && !valueCorrect {
+			log.Info("wrong value for team", teamName, " value:", ns.Environment)
+			return ctrl.Result{}, fmt.Errorf("wrong value %s for environment on namespace %s. possible values are: %s and %s", ns.Environment, ns.Name, EnvironmentProduction, EnvironmentStaging)
+		}
+
 		namespace.Labels["snappcloud.io/team"] = teamName
 		namespace.Labels["snappcloud.io/datasource"] = "true"
 
@@ -151,6 +164,17 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 	}
 	return ctrl.Result{}, nil
+}
+
+// EvaluateTeamEnvironmentValue evaluates the given team environment variable
+// returns (is_value_correct bool) (is_value_empty bool)
+func (t *TeamReconciler) EvaluateTeamEnvironmentValue(teamEnv string) (bool, bool) {
+	if strings.TrimSpace(teamEnv) == "" {
+		return false, true
+	} else if teamEnv == EnvironmentProduction || teamEnv == EnvironmentStaging {
+		return true, false
+	}
+	return false, false
 }
 
 func (t *TeamReconciler) CheckMetricNSFinalizerIsAdded(ctx context.Context, team *teamv1alpha1.Team) error {
@@ -238,9 +262,8 @@ func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func (t *TeamReconciler) finalizeNamespace(ctx context.Context, req ctrl.Request, ns *corev1.Namespace, team *teamv1alpha1.Team) error {
-
 	for i, namespace := range team.Spec.Namespaces {
-		if namespace == ns.Name {
+		if namespace.Name == ns.Name {
 			team.Spec.Namespaces = append(team.Spec.Namespaces[:i], team.Spec.Namespaces[i+1:]...)
 			break
 		}

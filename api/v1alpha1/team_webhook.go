@@ -40,8 +40,6 @@ func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(t).Complete()
 }
 
-// TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=create;get;list;patch;update;watch
 //+kubebuilder:rbac:groups=authorization.k8s.io,resources=localsubjectaccessreviews,verbs=create
@@ -59,7 +57,7 @@ func (t *Team) ValidateCreate() error {
 	}
 	for _, ns := range t.Spec.Namespaces {
 		// Check if namespace does not exist or has been deleted
-		teamns, err = nsExists(clientSet, t.Name, ns)
+		teamns, err = nsExists(clientSet, t.Name, ns.Name)
 		if err != nil {
 			return err
 		}
@@ -71,7 +69,7 @@ func (t *Team) ValidateCreate() error {
 		}
 
 		// Check If user has access to this namespace
-		err = teamAdminAccess(t, ns, clientSet)
+		err = teamAdminAccess(t, ns.Name, clientSet)
 		if err != nil {
 			return err
 		}
@@ -89,7 +87,7 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 	}
 	for _, ns := range t.Spec.Namespaces {
 		//check if namespace does not exist or has been deleted
-		teamns, err = nsExists(clientSet, t.Name, ns)
+		teamns, err = nsExists(clientSet, t.Name, ns.Name)
 		if err != nil {
 			return err
 		}
@@ -101,7 +99,7 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 		}
 
 		//Check If user has access to this namespace
-		err = teamAdminAccess(t, ns, clientSet)
+		err = teamAdminAccess(t, ns.Name, clientSet)
 		if err != nil {
 			return err
 		}
@@ -123,7 +121,7 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 	for _, ni := range namespaces.Items {
 		exists := false
 		for _, ns := range t.Spec.Namespaces {
-			if ni.Name == ns {
+			if ni.Name == ns.Name {
 				exists = true
 			}
 		}
