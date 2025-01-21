@@ -1,6 +1,6 @@
 module github.com/snapp-incubator/team-operator
 
-go 1.20
+go 1.23.0
 
 require (
 	github.com/onsi/ginkgo v1.16.5

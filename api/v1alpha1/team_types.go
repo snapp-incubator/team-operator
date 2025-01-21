@@ -32,6 +32,8 @@ type NamespaceDef struct {
 type TeamSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	// Foo is an example field of Team. Edit team_types.go to remove/update
 	TeamAdmin  string         `json:"teamAdmin,omitempty"`
 	Namespaces []NamespaceDef `json:"namespaces,omitempty"`
 }

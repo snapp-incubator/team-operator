@@ -220,7 +220,6 @@ func (t *TeamReconciler) checkMetricNSForTeamIsDeleted(ctx context.Context, req 
 
 // SetupWithManager sets up the controller with the Manager.
 func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
-
 	labelPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		labels := obj.GetLabels()
 		_, exists := labels["snappcloud.io/team"]
@@ -254,7 +253,7 @@ func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&teamv1alpha1.Team{}).
 		Watches(
-			&source.Kind{Type: &corev1.Namespace{}},
+			source.Kind{mgr.GetCache(), &corev1.Namespace{}, &handler.EnqueueRequestForObject[*corev1.Namespace]{}},
 			handler.EnqueueRequestsFromMapFunc(mapFunc),
 			builder.WithPredicates(labelPredicate),
 		).
