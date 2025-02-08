@@ -57,11 +57,24 @@ func (t *Team) ValidateCreate() error {
 		teamlog.Error(err, "error happened while validating create", "namespace", t.GetNamespace(), "name", t.GetName())
 		return errors.New("could not create client, failed to update team object")
 	}
+
+	// Fetch all namespaces in a single call
+	namespaces, err := clientSet.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		teamlog.Error(err, "can not get list of namespaces")
+		return errors.New("something went wrong to list namespaces,please contact cloud team")
+	}
+	// Create a map for lookup
+	namespaceMap := make(map[string]corev1.Namespace)
+	for _, ns := range namespaces.Items {
+		namespaceMap[ns.Name] = ns
+	}
+
 	for _, ns := range t.Spec.Namespaces {
 		// Check if namespace does not exist or has been deleted
-		teamns, err = nsExists(clientSet, t.Name, ns)
-		if err != nil {
-			return err
+		teamns, found := namespaceMap[ns]
+		if !found {
+			return fmt.Errorf("namespace \"%s\" does not exist for team \"%s\"", ns, t.Name)
 		}
 
 		// Check if namespace already has been added to another team
@@ -87,11 +100,24 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 		teamlog.Error(err, "error happened while validating update", "namespace", t.GetNamespace(), "name", t.GetName())
 		return errors.New("fail to get client, failed to update team object")
 	}
+
+	// Fetch all namespaces in a single call
+	namespaces, err := clientSet.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		teamlog.Error(err, "can not get list of namespaces")
+		return errors.New("something went wrong to list namespaces,please contact cloud team")
+	}
+	// Create a map for lookup
+	namespaceMap := make(map[string]corev1.Namespace)
+	for _, ns := range namespaces.Items {
+		namespaceMap[ns.Name] = ns
+	}
+
 	for _, ns := range t.Spec.Namespaces {
 		//check if namespace does not exist or has been deleted
-		teamns, err = nsExists(clientSet, t.Name, ns)
-		if err != nil {
-			return err
+		teamns, found := namespaceMap[ns]
+		if !found {
+			return fmt.Errorf("namespace \"%s\" does not exist for team \"%s\"", ns, t.Name)
 		}
 
 		//check if namespace already has been added to another team
@@ -115,7 +141,7 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
 		Limit:         100,
 	}
-	namespaces, err := clientSet.CoreV1().Namespaces().List(context.TODO(), listOptions)
+	namespaces, err = clientSet.CoreV1().Namespaces().List(context.TODO(), listOptions)
 	if err != nil {
 		teamlog.Error(err, "can not get list of namespaces")
 	}
@@ -153,16 +179,6 @@ func getClient() (c kubernetes.Clientset, err error) {
 		return *clientSet, errors.New("something went wrong please contact cloud team")
 	}
 	return *clientSet, nil
-}
-
-func nsExists(c kubernetes.Clientset, team, ns string) (tns corev1.Namespace, err error) {
-	teamNS, errNSGet := c.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
-
-	if errNSGet != nil {
-		errorResp := fmt.Sprintf("Error while getting namespace \"%s\" for team \"%s\". error: %s", ns, team, errNSGet.Error())
-		return *teamNS, errors.New(errorResp)
-	}
-	return *teamNS, nil
 }
 
 func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
