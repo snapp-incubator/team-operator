@@ -111,15 +111,16 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	// adding team label for each namespace in team spec
-	for _, ns := range team.Spec.Namespaces {
+	for _, ns := range team.Spec.Projects {
 		namespace := &corev1.Namespace{}
 
-		err := t.Client.Get(ctx, types.NamespacedName{Name: ns}, namespace)
+		err := t.Client.Get(ctx, types.NamespacedName{Name: ns.Name}, namespace)
 		if err != nil {
-			log.Error(err, "failed to get namespace", "namespace", ns)
+			log.Error(err, "failed to get namespace", "namespace", ns.Name)
 			return ctrl.Result{}, err
 		}
 		namespace.Labels["snappcloud.io/team"] = teamName
+		namespace.Labels["environment"] = ns.EnvLabel
 		namespace.Labels["snappcloud.io/datasource"] = "true"
 
 		if namespace.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -168,6 +169,9 @@ func (t *TeamReconciler) CheckMetricNSForTeamIsCreated(ctx context.Context, req 
 	metricTeamNS := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: req.Name + MetricNamespaceSuffix,
+			Labels: map[string]string{
+				"snappcloud.io/team": req.Name,
+			},
 		},
 	}
 	err := t.Client.Create(ctx, metricTeamNS)
@@ -239,9 +243,9 @@ func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 func (t *TeamReconciler) finalizeNamespace(ctx context.Context, req ctrl.Request, ns *corev1.Namespace, team *teamv1alpha1.Team) error {
 
-	for i, namespace := range team.Spec.Namespaces {
-		if namespace == ns.Name {
-			team.Spec.Namespaces = append(team.Spec.Namespaces[:i], team.Spec.Namespaces[i+1:]...)
+	for i, namespace := range team.Spec.Projects {
+		if namespace.Name == ns.Name {
+			team.Spec.Projects = append(team.Spec.Projects[:i], team.Spec.Projects[i+1:]...)
 			break
 		}
 	}
