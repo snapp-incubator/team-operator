@@ -36,6 +36,9 @@ import (
 // log is for logging in this package.
 var teamlog = logf.Log.WithName("team-resource")
 
+const STAGING_LABEL = "staging"
+const PRODUCTION_LABEL = "production"
+
 func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(t).Complete()
 }
@@ -92,6 +95,12 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 		teamns, err = nsExists(clientSet, t.Name, ns.Name)
 		if err != nil {
 			return err
+		}
+
+		//check to ensure the namepsace has a correct label
+		if ns.EnvLabel != PRODUCTION_LABEL && ns.EnvLabel != STAGING_LABEL {
+			errMessage := fmt.Sprintf("namespace Label should be \"%s\" or \"%s\", its not a correct label", PRODUCTION_LABEL, STAGING_LABEL)
+			return errors.New(errMessage)
 		}
 
 		//check if namespace already has been added to another team
