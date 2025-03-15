@@ -24,7 +24,6 @@ import (
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -118,29 +117,31 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 
 	//prevent deleting a namespace that have the team label
 
-	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"snappcloud.io/team": t.Name}}
+	//TODO we should manget it in another way
 
-	listOptions := metav1.ListOptions{
-		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
-		Limit:         100,
-	}
-	namespaces, err := clientSet.CoreV1().Namespaces().List(context.TODO(), listOptions)
-	if err != nil {
-		teamlog.Error(err, "can not get list of namespaces")
-	}
+	// labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"snappcloud.io/team": t.Name}}
 
-	for _, ni := range namespaces.Items {
-		exists := false
-		for _, ns := range t.Spec.Projects {
-			if ni.Name == ns.Name {
-				exists = true
-			}
-		}
-		if !exists {
-			errMessage := fmt.Sprintf("namespace \"%s\" has team label but does not exist in \"%s\" team", ni.Name, t.Name)
-			return errors.New(errMessage)
-		}
-	}
+	// listOptions := metav1.ListOptions{
+	// 	LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
+	// 	Limit:         100,
+	// }
+	// namespaces, err := clientSet.CoreV1().Namespaces().List(context.TODO(), listOptions)
+	// if err != nil {
+	// 	teamlog.Error(err, "can not get list of namespaces")
+	// }
+
+	// for _, ni := range namespaces.Items {
+	// 	exists := false
+	// 	for _, ns := range t.Spec.Projects {
+	// 		if ni.Name == ns.Name {
+	// 			exists = true
+	// 		}
+	// 	}
+	// 	if !exists {
+	// 		errMessage := fmt.Sprintf("namespace \"%s\" has team label but does not exist in \"%s\" team", ni.Name, t.Name)
+	// 		return errors.New(errMessage)
+	// 	}
+	// }
 	return nil
 }
 
