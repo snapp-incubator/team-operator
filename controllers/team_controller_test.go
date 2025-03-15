@@ -2,6 +2,8 @@ package controllers
 
 import (
 	"context"
+	"time"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/snapp-incubator/team-operator/api/v1alpha1"
@@ -9,13 +11,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"time"
 )
 
 var (
 	namespaces = []string{"test-ns-1", "test-ns-2"}
 	teamAdmin  = "user-test"
 	teamName   = "test-cloud"
+	projects   = []v1alpha1.Project{
+		{Name: "test-ns-1", EnvLabel: "staging"},
+		{Name: "test-ns-2", EnvLabel: "production"},
+	}
 )
 
 var _ = Describe("Testing Team", func() {
@@ -31,6 +36,7 @@ var _ = Describe("Testing Team", func() {
 		Spec: v1alpha1.TeamSpec{
 			TeamAdmin:  teamAdmin,
 			Namespaces: namespaces,
+			Projects:   projects,
 		},
 	}
 

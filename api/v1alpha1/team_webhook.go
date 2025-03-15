@@ -36,6 +36,9 @@ import (
 // log is for logging in this package.
 var teamlog = logf.Log.WithName("team-resource")
 
+const STAGING_LABEL = "staging"
+const PRODUCTION_LABEL = "production"
+
 func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(t).Complete()
 }
@@ -57,9 +60,9 @@ func (t *Team) ValidateCreate() error {
 		teamlog.Error(err, "error happened while validating create", "namespace", t.GetNamespace(), "name", t.GetName())
 		return errors.New("could not create client, failed to update team object")
 	}
-	for _, ns := range t.Spec.Namespaces {
+	for _, ns := range t.Spec.Projects {
 		// Check if namespace does not exist or has been deleted
-		teamns, err = nsExists(clientSet, t.Name, ns)
+		teamns, err = nsExists(clientSet, t.Name, ns.Name)
 		if err != nil {
 			return err
 		}
@@ -71,7 +74,7 @@ func (t *Team) ValidateCreate() error {
 		}
 
 		// Check If user has access to this namespace
-		err = teamAdminAccess(t, ns, clientSet)
+		err = teamAdminAccess(t, ns.Name, clientSet)
 		if err != nil {
 			return err
 		}
@@ -87,11 +90,17 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 		teamlog.Error(err, "error happened while validating update", "namespace", t.GetNamespace(), "name", t.GetName())
 		return errors.New("fail to get client, failed to update team object")
 	}
-	for _, ns := range t.Spec.Namespaces {
+	for _, ns := range t.Spec.Projects {
 		//check if namespace does not exist or has been deleted
-		teamns, err = nsExists(clientSet, t.Name, ns)
+		teamns, err = nsExists(clientSet, t.Name, ns.Name)
 		if err != nil {
 			return err
+		}
+
+		//check to ensure the namepsace has a correct label
+		if ns.EnvLabel != PRODUCTION_LABEL && ns.EnvLabel != STAGING_LABEL {
+			errMessage := fmt.Sprintf("namespace Label should be \"%s\" or \"%s\", its not a correct label", PRODUCTION_LABEL, STAGING_LABEL)
+			return errors.New(errMessage)
 		}
 
 		//check if namespace already has been added to another team
@@ -101,7 +110,7 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 		}
 
 		//Check If user has access to this namespace
-		err = teamAdminAccess(t, ns, clientSet)
+		err = teamAdminAccess(t, ns.Name, clientSet)
 		if err != nil {
 			return err
 		}
@@ -122,8 +131,8 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 
 	for _, ni := range namespaces.Items {
 		exists := false
-		for _, ns := range t.Spec.Namespaces {
-			if ni.Name == ns {
+		for _, ns := range t.Spec.Projects {
+			if ni.Name == ns.Name {
 				exists = true
 			}
 		}
