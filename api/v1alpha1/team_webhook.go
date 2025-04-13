@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,8 +35,11 @@ import (
 // log is for logging in this package.
 var teamlog = logf.Log.WithName("team-resource")
 
-const StagingLabel = "staging"
-const ProductionLabel = "production"
+const (
+	MetricNamespaceSuffix = "-team"
+	StagingLabel          = "staging"
+	ProductionLabel       = "production"
+)
 
 func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(t).Complete()
@@ -133,7 +135,7 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 				exists = true
 			}
 		}
-		if !exists {
+		if !exists && ni.Name != t.Name+MetricNamespaceSuffix {
 			errMessage := fmt.Sprintf("namespace \"%s\" has team label but does not exist in \"%s\" team", ni.Name, t.Name)
 			return errors.New(errMessage)
 		}
