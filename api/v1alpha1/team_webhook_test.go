@@ -50,8 +50,8 @@ var _ = Describe("", func() {
 				ObjectMeta: fooTeam.ObjectMeta,
 				Spec: TeamSpec{
 					TeamAdmin: fooTeamAdminName,
-					Namespaces: []string{
-						"not-existing-namespace",
+					Projects: []Project{
+						{Name: "not-existing-namespace", EnvLabel: "staging"},
 					},
 				},
 			}
@@ -72,8 +72,8 @@ var _ = Describe("", func() {
 				ObjectMeta: fooTeam.ObjectMeta,
 				Spec: TeamSpec{
 					TeamAdmin: "not-existing-team-admin",
-					Namespaces: []string{
-						"foo-namespace",
+					Projects: []Project{
+						{Name: "foo-namespace"},
 					},
 				},
 			}
@@ -92,8 +92,8 @@ var _ = Describe("", func() {
 				TypeMeta:   fooTeam.TypeMeta,
 				ObjectMeta: fooTeam.ObjectMeta,
 				Spec: TeamSpec{
-					TeamAdmin:  fooTeamAdminName,
-					Namespaces: fooTeamNamespaces,
+					TeamAdmin: fooTeamAdminName,
+					Projects:  []Project{{Name: fooTeamNamespaces[0]}},
 				},
 			}
 			err = k8sClient.Create(ctx, fooTeamTmp)

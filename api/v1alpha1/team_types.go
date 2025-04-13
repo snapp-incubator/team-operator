@@ -28,15 +28,17 @@ type Project struct {
 	EnvLabel string `json:"envLabel"`
 }
 
+type Admin struct {
+	Name string `json:"name"`
+}
+
 // TeamSpec defines the desired state of Team
 type TeamSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of Team. Edit team_types.go to remove/update
-	TeamAdmin  string    `json:"teamAdmin,omitempty"`
-	Namespaces []string  `json:"namespaces,omitempty"`
-	Projects   []Project `json:"projects,omitempty"`
+	// TeamAdmins is a list of Admin spec, who are the owners of the Team
+	TeamAdmins []Admin `json:"teamAdmins,omitempty"`
+	TeamAdmin  string  `json:"teamAdmin,omitempty"`
+	// Projects is a list of Project spec, which specify a project/namespace in k8s
+	Projects []Project `json:"projects,omitempty"`
 }
 
 // TeamStatus defines the observed state of Team

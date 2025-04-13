@@ -36,17 +36,14 @@ import (
 // log is for logging in this package.
 var teamlog = logf.Log.WithName("team-resource")
 
-const STAGING_LABEL = "staging"
-const PRODUCTION_LABEL = "production"
+const StagingLabel = "staging"
+const ProductionLabel = "production"
 
 func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(t).Complete()
 }
 
-// TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-
-// TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
-//+kubebuilder:rbac:groups="",resources=namespaces,verbs=create;get;list;patch;update;watch
+//+kubebuilder:rbac:groups="",resources=namespaces,verbs=create;get;list;patch;update;watch;delete
 //+kubebuilder:rbac:groups=authorization.k8s.io,resources=localsubjectaccessreviews,verbs=create
 //+kubebuilder:webhook:path=/validate-team-snappcloud-io-v1alpha1-team,mutating=false,failurePolicy=fail,sideEffects=None,groups=team.snappcloud.io,resources=teams,verbs=create;update,versions=v1alpha1,name=vteam.kb.io,admissionReviewVersions=v1
 
@@ -97,9 +94,9 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 			return err
 		}
 
-		//check to ensure the namepsace has a correct label
-		if ns.EnvLabel != PRODUCTION_LABEL && ns.EnvLabel != STAGING_LABEL {
-			errMessage := fmt.Sprintf("namespace Label should be \"%s\" or \"%s\", its not a correct label", PRODUCTION_LABEL, STAGING_LABEL)
+		//check to ensure the namespace has a correct label
+		if ns.EnvLabel != ProductionLabel && ns.EnvLabel != StagingLabel {
+			errMessage := fmt.Sprintf("namespace Label should be \"%s\" or \"%s\", its not a correct label", ProductionLabel, StagingLabel)
 			return errors.New(errMessage)
 		}
 
@@ -185,30 +182,39 @@ func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 }
 
 func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
-	action := authv1.ResourceAttributes{
-		Namespace: ns,
-		Verb:      "create",
-		Resource:  "rolebindings",
-		Group:     "rbac.authorization.k8s.io",
-		Version:   "v1",
-	}
-	check := authv1.LocalSubjectAccessReview{
-		ObjectMeta: metav1.ObjectMeta{Namespace: ns},
-		Spec: authv1.SubjectAccessReviewSpec{
-			User:               r.Spec.TeamAdmin,
-			ResourceAttributes: &action,
-		},
+	var allowed = false
+	for _, user := range r.Spec.TeamAdmins {
+		action := authv1.ResourceAttributes{
+			Namespace: ns,
+			Verb:      "create",
+			Resource:  "rolebindings",
+			Group:     "rbac.authorization.k8s.io",
+			Version:   "v1",
+		}
+		check := authv1.LocalSubjectAccessReview{
+			ObjectMeta: metav1.ObjectMeta{Namespace: ns},
+			Spec: authv1.SubjectAccessReviewSpec{
+				User:               user.Name,
+				ResourceAttributes: &action,
+			},
+		}
+
+		resp, errAuth := c.AuthorizationV1().
+			LocalSubjectAccessReviews(ns).
+			Create(context.TODO(), &check, metav1.CreateOptions{})
+		if errAuth != nil {
+			teamlog.Error(errAuth, "error happened while checking team owner permission")
+			return errAuth
+		}
+
+		if resp.Status.Allowed {
+			allowed = true
+			break
+		}
 	}
 
-	resp, errAuth := c.AuthorizationV1().
-		LocalSubjectAccessReviews(ns).
-		Create(context.TODO(), &check, metav1.CreateOptions{})
-
-	if errAuth != nil {
-		teamlog.Error(errAuth, "error happened while checking team owner permission")
-	}
-	if !resp.Status.Allowed {
-		errMessage := fmt.Sprintf("team owner \"%s\" is not allowed to add namespace \"%s\" to team \"%s\", please add \"%s\" as admin of the project with the followig command: oc policy add-role-to-user admin %s -n %s", r.Spec.TeamAdmin, ns, r.Name, r.Spec.TeamAdmin, r.Spec.TeamAdmin, ns)
+	if !allowed {
+		errMessage := fmt.Sprintf("none of the team owners are allowed to add namespace \"%s\" to team \"%s\", please add at least one of team admins as admin of the project with the followig command: oc policy add-role-to-user admin <user> -n %s", ns, r.Name, ns)
 		return errors.New(errMessage)
 	}
 	return nil

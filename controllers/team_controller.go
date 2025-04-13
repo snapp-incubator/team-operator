@@ -57,48 +57,38 @@ type TeamReconciler struct {
 //+kubebuilder:rbac:groups="",resources=namespaces/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",resources=namespaces/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Team object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.13.0/pkg/reconcile
 func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
+	loggerObj := log.FromContext(ctx)
 
 	team := &teamv1alpha1.Team{}
 
-	err := t.Client.Get(ctx, req.NamespacedName, team)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			log.Info("team resource not found. Ignoring since the object must be deleted", "team", req.NamespacedName)
-			err = t.checkMetricNSForTeamIsDeleted(ctx, req)
-			if err != nil {
-				return ctrl.Result{}, err
+	errClient := t.Client.Get(ctx, req.NamespacedName, team)
+	if errClient != nil {
+		if apierrors.IsNotFound(errClient) {
+			loggerObj.Info("team resource not found. Ignoring since the object must be deleted", "team", req.NamespacedName)
+			errClient = t.checkMetricNSForTeamIsDeleted(ctx, req)
+			if errClient != nil {
+				return ctrl.Result{}, errClient
 			}
 			return ctrl.Result{}, nil
 		}
-		log.Error(err, "Failed to get team", "team", req.NamespacedName)
-		return ctrl.Result{}, err
+		loggerObj.Error(errClient, "Failed to get team", "team", req.NamespacedName)
+		return ctrl.Result{}, errClient
 	}
 
 	if !team.ObjectMeta.GetDeletionTimestamp().IsZero() {
-		err = t.checkMetricNSForTeamIsDeleted(ctx, req)
-		if err != nil && !errors.IsNotFound(err) {
-			return ctrl.Result{}, err
+		errNSDeleted := t.checkMetricNSForTeamIsDeleted(ctx, req)
+		if errNSDeleted != nil && !errors.IsNotFound(errNSDeleted) {
+			return ctrl.Result{}, errNSDeleted
 		}
 		if controllerutil.ContainsFinalizer(team, MetricNamespaceFinalizer) {
 			controllerutil.RemoveFinalizer(team, MetricNamespaceFinalizer)
-			if err = t.Client.Update(ctx, team); err != nil {
-				return ctrl.Result{}, err
+			if errNSDeleted = t.Client.Update(ctx, team); errNSDeleted != nil {
+				return ctrl.Result{}, errNSDeleted
 			}
 		}
 		return ctrl.Result{}, nil
 	}
-	teamName := team.GetName()
 
 	errAddFinalizer := t.CheckMetricNSFinalizerIsAdded(ctx, team)
 	if errAddFinalizer != nil {
@@ -110,18 +100,25 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, metricTeamErr
 	}
 
+	updateAdminsErr := t.UpdateAdminsBackwardCompatibility(ctx, team)
+	if updateAdminsErr != nil {
+		return ctrl.Result{}, updateAdminsErr
+	}
+
 	// adding team label for each namespace in team spec
 	for _, ns := range team.Spec.Projects {
 		namespace := &corev1.Namespace{}
 
 		err := t.Client.Get(ctx, types.NamespacedName{Name: ns.Name}, namespace)
 		if err != nil {
-			log.Error(err, "failed to get namespace", "namespace", ns.Name)
+			loggerObj.Error(err, "failed to get namespace", "namespace", ns.Name)
 			return ctrl.Result{}, err
 		}
-		namespace.Labels["snappcloud.io/team"] = teamName
+		namespace.Labels["snappcloud.io/team"] = team.GetName()
 		namespace.Labels["environment"] = ns.EnvLabel
-		namespace.Labels["snappcloud.io/datasource"] = "true"
+		if ns.EnvLabel == teamv1alpha1.ProductionLabel {
+			namespace.Labels["snappcloud.io/datasource"] = "true"
+		}
 
 		if namespace.ObjectMeta.DeletionTimestamp.IsZero() {
 			if !controllerutil.ContainsFinalizer(namespace, teamFinalizer) {
@@ -145,13 +142,32 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			return ctrl.Result{}, nil
 		}
 
-		err = t.Client.Update(ctx, namespace)
-		if err != nil {
-			log.Error(err, "failed to update namespace", "namespace", ns)
-			return ctrl.Result{}, err
+		errUpdate := t.Client.Update(ctx, namespace)
+		if errUpdate != nil {
+			loggerObj.Error(errUpdate, "failed to update namespace", "namespace", ns)
+			return ctrl.Result{}, errUpdate
 		}
 	}
 	return ctrl.Result{}, nil
+}
+
+func (t *TeamReconciler) UpdateAdminsBackwardCompatibility(ctx context.Context, team *teamv1alpha1.Team) error {
+	var oldAdminExists = false
+	for _, user := range team.Spec.TeamAdmins {
+		if user.Name == team.Spec.TeamAdmin {
+			oldAdminExists = true
+			break
+		}
+	}
+
+	if !oldAdminExists {
+		team.Spec.TeamAdmins = append(team.Spec.TeamAdmins, teamv1alpha1.Admin{Name: team.Spec.TeamAdmin})
+		err := t.Client.Update(ctx, team)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (t *TeamReconciler) CheckMetricNSFinalizerIsAdded(ctx context.Context, team *teamv1alpha1.Team) error {
@@ -166,18 +182,42 @@ func (t *TeamReconciler) CheckMetricNSFinalizerIsAdded(ctx context.Context, team
 }
 
 func (t *TeamReconciler) CheckMetricNSForTeamIsCreated(ctx context.Context, req ctrl.Request) error {
+	desiredName := req.Name + MetricNamespaceSuffix
 	metricTeamNS := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: req.Name + MetricNamespaceSuffix,
+			Name: desiredName,
 			Labels: map[string]string{
 				"snappcloud.io/team": req.Name,
 			},
 		},
 	}
-	err := t.Client.Create(ctx, metricTeamNS)
-	if err != nil {
-		if !errors.IsAlreadyExists(err) {
-			return err
+
+	nsTmp := &corev1.Namespace{}
+	errGet := t.Client.Get(ctx, types.NamespacedName{Name: desiredName}, nsTmp)
+	if errGet != nil {
+		errCreate := t.Client.Create(ctx, metricTeamNS)
+		if errCreate != nil {
+			if !errors.IsAlreadyExists(errCreate) {
+				return errCreate
+			}
+		}
+	}
+
+	var hasTeam = false
+	for key, value := range nsTmp.ObjectMeta.Labels {
+		if key == "snappcloud.io/team" {
+			if value == req.Name {
+				hasTeam = true
+				break
+			}
+		}
+	}
+	if !hasTeam {
+		errCreate := t.Client.Update(ctx, metricTeamNS)
+		if errCreate != nil {
+			if !errors.IsAlreadyExists(errCreate) {
+				return errCreate
+			}
 		}
 	}
 	return nil
@@ -209,13 +249,13 @@ func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	mapFunc := func(a client.Object) []reconcile.Request {
 		ctx := context.Background()
-		log := log.FromContext(ctx)
+		loggerObj := log.FromContext(ctx)
 
 		var requests []reconcile.Request
 
 		var teamList teamv1alpha1.TeamList
 		if err := mgr.GetClient().List(ctx, &teamList, &client.ListOptions{}); err != nil {
-			log.Error(err, "Unable to list team resources")
+			loggerObj.Error(err, "Unable to list team resources")
 			return nil
 		}
 

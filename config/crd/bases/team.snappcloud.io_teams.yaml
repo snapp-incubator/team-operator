@@ -39,11 +39,9 @@ spec:
           spec:
             description: TeamSpec defines the desired state of Team
             properties:
-              namespaces:
-                items:
-                  type: string
-                type: array
               projects:
+                description: Projects is a list of Project spec, which specify a project/namespace
+                  in k8s
                 items:
                   properties:
                     envLabel:
@@ -56,9 +54,18 @@ spec:
                   type: object
                 type: array
               teamAdmin:
-                description: Foo is an example field of Team. Edit team_types.go to
-                  remove/update
                 type: string
+              teamAdmins:
+                description: TeamAdmins is a list of Admin spec, who are the owners
+                  of the Team
+                items:
+                  properties:
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
             type: object
           status:
             description: TeamStatus defines the observed state of Team
