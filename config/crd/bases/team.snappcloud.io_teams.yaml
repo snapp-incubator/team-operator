@@ -56,9 +56,13 @@ spec:
                   type: object
                 type: array
               teamAdmin:
+                type: string
+              teamAdmins:
                 description: Foo is an example field of Team. Edit team_types.go to
                   remove/update
-                type: string
+                items:
+                  type: string
+                type: array
             type: object
           status:
             description: TeamStatus defines the observed state of Team

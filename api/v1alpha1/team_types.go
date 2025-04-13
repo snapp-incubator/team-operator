@@ -34,6 +34,7 @@ type TeamSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of Team. Edit team_types.go to remove/update
+	TeamAdmins []string  `json:"teamAdmins,omitempty"`
 	TeamAdmin  string    `json:"teamAdmin,omitempty"`
 	Namespaces []string  `json:"namespaces,omitempty"`
 	Projects   []Project `json:"projects,omitempty"`
