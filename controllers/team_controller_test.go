@@ -34,9 +34,8 @@ var _ = Describe("Testing Team", func() {
 			Kind:       "Team",
 		},
 		Spec: v1alpha1.TeamSpec{
-			TeamAdmin:  teamAdmin,
-			Namespaces: namespaces,
-			Projects:   projects,
+			TeamAdmin: teamAdmin,
+			Projects:  projects,
 		},
 	}
 

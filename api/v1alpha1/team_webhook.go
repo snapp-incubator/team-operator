@@ -182,30 +182,38 @@ func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 }
 
 func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
-	action := authv1.ResourceAttributes{
-		Namespace: ns,
-		Verb:      "create",
-		Resource:  "rolebindings",
-		Group:     "rbac.authorization.k8s.io",
-		Version:   "v1",
-	}
-	check := authv1.LocalSubjectAccessReview{
-		ObjectMeta: metav1.ObjectMeta{Namespace: ns},
-		Spec: authv1.SubjectAccessReviewSpec{
-			User:               r.Spec.TeamAdmin,
-			ResourceAttributes: &action,
-		},
+	var allowed = false
+	for _, user := range r.Spec.TeamAdmins {
+		action := authv1.ResourceAttributes{
+			Namespace: ns,
+			Verb:      "create",
+			Resource:  "rolebindings",
+			Group:     "rbac.authorization.k8s.io",
+			Version:   "v1",
+		}
+		check := authv1.LocalSubjectAccessReview{
+			ObjectMeta: metav1.ObjectMeta{Namespace: ns},
+			Spec: authv1.SubjectAccessReviewSpec{
+				User:               user.Name,
+				ResourceAttributes: &action,
+			},
+		}
+
+		resp, errAuth := c.AuthorizationV1().
+			LocalSubjectAccessReviews(ns).
+			Create(context.TODO(), &check, metav1.CreateOptions{})
+		if errAuth != nil {
+			teamlog.Error(errAuth, "error happened while checking team owner permission")
+		}
+
+		if resp.Status.Allowed {
+			allowed = true
+			break
+		}
 	}
 
-	resp, errAuth := c.AuthorizationV1().
-		LocalSubjectAccessReviews(ns).
-		Create(context.TODO(), &check, metav1.CreateOptions{})
-
-	if errAuth != nil {
-		teamlog.Error(errAuth, "error happened while checking team owner permission")
-	}
-	if !resp.Status.Allowed {
-		errMessage := fmt.Sprintf("team owner \"%s\" is not allowed to add namespace \"%s\" to team \"%s\", please add \"%s\" as admin of the project with the followig command: oc policy add-role-to-user admin %s -n %s", r.Spec.TeamAdmin, ns, r.Name, r.Spec.TeamAdmin, r.Spec.TeamAdmin, ns)
+	if !allowed {
+		errMessage := fmt.Sprintf("none of the team owners are allowed to add namespace \"%s\" to team \"%s\", please add at least one of team admins as admin of the project with the followig command: oc policy add-role-to-user admin <user> -n %s", ns, r.Name, ns)
 		return errors.New(errMessage)
 	}
 	return nil

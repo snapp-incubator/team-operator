@@ -161,15 +161,15 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 func (t *TeamReconciler) UpdateAdminsBackwardCompatibility(ctx context.Context, team *teamv1alpha1.Team) error {
 	var oldAdminExists = false
-	for _, name := range team.Spec.TeamAdmins {
-		if name == team.Spec.TeamAdmin {
+	for _, user := range team.Spec.TeamAdmins {
+		if user.Name == team.Spec.TeamAdmin {
 			oldAdminExists = true
 			break
 		}
 	}
 
 	if !oldAdminExists {
-		team.Spec.TeamAdmins = append(team.Spec.TeamAdmins, team.Spec.TeamAdmin)
+		team.Spec.TeamAdmins = append(team.Spec.TeamAdmins, teamv1alpha1.Admin{Name: team.Spec.TeamAdmin})
 		err := t.Client.Update(ctx, team)
 		if err != nil {
 			return err

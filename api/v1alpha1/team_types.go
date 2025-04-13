@@ -28,15 +28,18 @@ type Project struct {
 	EnvLabel string `json:"envLabel"`
 }
 
+type Admin struct {
+	Name string `json:"name"`
+}
+
 // TeamSpec defines the desired state of Team
 type TeamSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of Team. Edit team_types.go to remove/update
-	TeamAdmins []string  `json:"teamAdmins,omitempty"`
+	TeamAdmins []Admin   `json:"teamAdmins,omitempty"`
 	TeamAdmin  string    `json:"teamAdmin,omitempty"`
-	Namespaces []string  `json:"namespaces,omitempty"`
 	Projects   []Project `json:"projects,omitempty"`
 }
 

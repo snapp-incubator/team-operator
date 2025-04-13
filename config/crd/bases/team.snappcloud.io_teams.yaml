@@ -39,10 +39,6 @@ spec:
           spec:
             description: TeamSpec defines the desired state of Team
             properties:
-              namespaces:
-                items:
-                  type: string
-                type: array
               projects:
                 items:
                   properties:
@@ -61,7 +57,12 @@ spec:
                 description: Foo is an example field of Team. Edit team_types.go to
                   remove/update
                 items:
-                  type: string
+                  properties:
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
                 type: array
             type: object
           status:
