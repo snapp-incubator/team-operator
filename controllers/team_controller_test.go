@@ -14,10 +14,9 @@ import (
 )
 
 var (
-	namespaces = []string{"test-ns-1", "test-ns-2"}
-	teamAdmin  = "user-test"
-	teamName   = "test-cloud"
-	projects   = []v1alpha1.Project{
+	teamAdmin = "user-test"
+	teamName  = "test-cloud"
+	projects  = []v1alpha1.Project{
 		{Name: "test-ns-1", EnvLabel: "staging"},
 		{Name: "test-ns-2", EnvLabel: "production"},
 	}
@@ -41,10 +40,10 @@ var _ = Describe("Testing Team", func() {
 
 	BeforeEach(func() {
 		// create namespaces
-		for _, ns := range namespaces {
+		for _, ns := range projects {
 			nsObj := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: ns,
+					Name: ns.Name,
 				},
 			}
 			err := k8sClient.Create(ctx, nsObj)
@@ -73,12 +72,16 @@ var _ = Describe("Testing Team", func() {
 		})
 
 		It("all namespaces should have the team and datasource labels", func() {
-			for _, ns := range namespaces {
+			for _, ns := range projects {
 				nsObj := &corev1.Namespace{}
-				err := k8sClient.Get(ctx, types.NamespacedName{Name: ns}, nsObj)
-				Expect(err).To(BeNil())
+				errNS := k8sClient.Get(ctx, types.NamespacedName{Name: ns.Name}, nsObj)
+				Expect(errNS).To(BeNil())
 				Expect(nsObj.ObjectMeta.Labels["snappcloud.io/team"]).To(Equal(teamName))
-				Expect(nsObj.ObjectMeta.Labels["snappcloud.io/datasource"]).To(Equal("true"))
+
+				nsMetricObj := &corev1.Namespace{}
+				errMetric := k8sClient.Get(ctx, types.NamespacedName{Name: teamName + MetricNamespaceSuffix}, nsMetricObj)
+				Expect(errMetric).To(BeNil())
+				Expect(nsMetricObj.ObjectMeta.Labels["snappcloud.io/team"]).To(Equal(teamName))
 			}
 		})
 

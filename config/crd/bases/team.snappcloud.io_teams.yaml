@@ -40,6 +40,8 @@ spec:
             description: TeamSpec defines the desired state of Team
             properties:
               projects:
+                description: Projects is a list of Project spec, which specify a project/namespace
+                  in k8s
                 items:
                   properties:
                     envLabel:
@@ -54,8 +56,8 @@ spec:
               teamAdmin:
                 type: string
               teamAdmins:
-                description: Foo is an example field of Team. Edit team_types.go to
-                  remove/update
+                description: TeamAdmins is a list of Admin spec, who are the owners
+                  of the Team
                 items:
                   properties:
                     name:

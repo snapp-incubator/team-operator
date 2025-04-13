@@ -43,7 +43,7 @@ func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(t).Complete()
 }
 
-//+kubebuilder:rbac:groups="",resources=namespaces,verbs=create;get;list;patch;update;watch
+//+kubebuilder:rbac:groups="",resources=namespaces,verbs=create;get;list;patch;update;watch;delete
 //+kubebuilder:rbac:groups=authorization.k8s.io,resources=localsubjectaccessreviews,verbs=create
 //+kubebuilder:webhook:path=/validate-team-snappcloud-io-v1alpha1-team,mutating=false,failurePolicy=fail,sideEffects=None,groups=team.snappcloud.io,resources=teams,verbs=create;update,versions=v1alpha1,name=vteam.kb.io,admissionReviewVersions=v1
 
@@ -204,6 +204,7 @@ func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
 			Create(context.TODO(), &check, metav1.CreateOptions{})
 		if errAuth != nil {
 			teamlog.Error(errAuth, "error happened while checking team owner permission")
+			return errAuth
 		}
 
 		if resp.Status.Allowed {
