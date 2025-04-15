@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"testing"
 	"time"
 
@@ -93,6 +94,12 @@ var _ = BeforeSuite(func() {
 		MetricsBindAddress: "0",
 	})
 	Expect(err).NotTo(HaveOccurred())
+
+	teamValidator, errNewMutateWebhook := NewMutatingWebhook(mgr)
+	Expect(errNewMutateWebhook).To(BeNil())
+	mgr.GetWebhookServer().Register("/validate-team-snappcloud-io-v1alpha1-team", &webhook.Admission{
+		Handler: teamValidator,
+	})
 
 	err = (&Team{}).SetupWebhookWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())

@@ -19,6 +19,7 @@ package main
 import (
 	"flag"
 	"os"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -96,6 +97,16 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Team")
 		os.Exit(1)
 	}
+
+	teamValidator, errNewMutateWebhook := teamv1alpha1.NewMutatingWebhook(mgr)
+	if errNewMutateWebhook != nil {
+		setupLog.Error(errNewMutateWebhook, "unable to get new mutating webhook for team validator")
+		os.Exit(1)
+	}
+	mgr.GetWebhookServer().Register("/validate-team-snappcloud-io-v1alpha1-team", &webhook.Admission{
+		Handler: teamValidator,
+	})
+
 	if err = (&teamv1alpha1.Team{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "Team")
 		os.Exit(1)

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	admissionv1 "k8s.io/api/admission/v1"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,9 +28,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"net/http"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // log is for logging in this package.
@@ -49,31 +52,29 @@ func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 //+kubebuilder:rbac:groups=authorization.k8s.io,resources=localsubjectaccessreviews,verbs=create
 //+kubebuilder:webhook:path=/validate-team-snappcloud-io-v1alpha1-team,mutating=false,failurePolicy=fail,sideEffects=None,groups=team.snappcloud.io,resources=teams,verbs=create;update,versions=v1alpha1,name=vteam.kb.io,admissionReviewVersions=v1
 
-var _ webhook.Validator = &Team{}
-var teamns corev1.Namespace
-
-func (t *Team) ValidateCreate() error {
-	teamlog.Info("validating team create", "name", t.GetName())
+func ValidateCreate(obj *Team, currentUser string) error {
+	var teamNS corev1.Namespace
+	teamlog.Info("validating team create", "name", obj.GetName())
 	clientSet, err := getClient()
 	if err != nil {
-		teamlog.Error(err, "error happened while validating create", "namespace", t.GetNamespace(), "name", t.GetName())
+		teamlog.Error(err, "error happened while validating create", "namespace", obj.GetNamespace(), "name", obj.GetName())
 		return errors.New("could not create client, failed to update team object")
 	}
-	for _, ns := range t.Spec.Projects {
+	for _, ns := range obj.Spec.Projects {
 		// Check if namespace does not exist or has been deleted
-		teamns, err = nsExists(clientSet, t.Name, ns.Name)
+		teamNS, err = nsExists(clientSet, obj.Name, ns.Name)
 		if err != nil {
 			return err
 		}
 
 		// Check if namespace already has been added to another team
-		err = nsHasTeam(t, &teamns)
+		err = nsHasTeam(obj, &teamNS)
 		if err != nil {
 			return err
 		}
 
 		// Check If user has access to this namespace
-		err = teamAdminAccess(t, ns.Name, clientSet)
+		err = teamAdminAccess(obj, clientSet, ns.Name, currentUser)
 		if err != nil {
 			return err
 		}
@@ -81,17 +82,18 @@ func (t *Team) ValidateCreate() error {
 	return nil
 }
 
-func (t *Team) ValidateUpdate(old runtime.Object) error {
-	teamlog.Info("validating team update", "name", t.GetName())
+func ValidateUpdate(obj *Team, currentUser string) error {
+	var teamns corev1.Namespace
+	teamlog.Info("validating team update", "name", obj.GetName())
 
 	clientSet, err := getClient()
 	if err != nil {
-		teamlog.Error(err, "error happened while validating update", "namespace", t.GetNamespace(), "name", t.GetName())
+		teamlog.Error(err, "error happened while validating update", "namespace", obj.GetNamespace(), "name", obj.GetName())
 		return errors.New("fail to get client, failed to update team object")
 	}
-	for _, ns := range t.Spec.Projects {
+	for _, ns := range obj.Spec.Projects {
 		//check if namespace does not exist or has been deleted
-		teamns, err = nsExists(clientSet, t.Name, ns.Name)
+		teamns, err = nsExists(clientSet, obj.Name, ns.Name)
 		if err != nil {
 			return err
 		}
@@ -103,13 +105,13 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 		}
 
 		//check if namespace already has been added to another team
-		err = nsHasTeam(t, &teamns)
+		err = nsHasTeam(obj, &teamns)
 		if err != nil {
 			return err
 		}
 
 		//Check If user has access to this namespace
-		err = teamAdminAccess(t, ns.Name, clientSet)
+		err = teamAdminAccess(obj, clientSet, ns.Name, currentUser)
 		if err != nil {
 			return err
 		}
@@ -117,7 +119,7 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 
 	//prevent deleting a namespace that have the team label
 
-	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"snappcloud.io/team": t.Name}}
+	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"snappcloud.io/team": obj.Name}}
 
 	listOptions := metav1.ListOptions{
 		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
@@ -130,21 +132,21 @@ func (t *Team) ValidateUpdate(old runtime.Object) error {
 
 	for _, ni := range namespaces.Items {
 		exists := false
-		for _, ns := range t.Spec.Projects {
+		for _, ns := range obj.Spec.Projects {
 			if ni.Name == ns.Name {
 				exists = true
 			}
 		}
-		if !exists && ni.Name != t.Name+MetricNamespaceSuffix {
-			errMessage := fmt.Sprintf("namespace \"%s\" has team label but does not exist in \"%s\" team", ni.Name, t.Name)
+		if !exists && ni.Name != obj.Name+MetricNamespaceSuffix {
+			errMessage := fmt.Sprintf("namespace \"%s\" has team label but does not exist in \"%s\" team", ni.Name, obj.Name)
 			return errors.New(errMessage)
 		}
 	}
 	return nil
 }
 
-func (t *Team) ValidateDelete() error {
-	teamlog.Info("validate delete", "name", t.Name)
+func ValidateDelete(obj *Team, currentUser string) error {
+	teamlog.Info("validate delete", "name", obj.Name)
 	return nil
 }
 
@@ -183,9 +185,17 @@ func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 	return nil
 }
 
-func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
+func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) (err error) {
+	var currentUserIsAdmin = false
 	var allowed = false
 	for _, user := range r.Spec.TeamAdmins {
+		if user.Name == currentUser {
+			currentUserIsAdmin = true
+			break
+		}
+	}
+
+	if currentUserIsAdmin {
 		action := authv1.ResourceAttributes{
 			Namespace: ns,
 			Verb:      "create",
@@ -196,7 +206,7 @@ func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
 		check := authv1.LocalSubjectAccessReview{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns},
 			Spec: authv1.SubjectAccessReviewSpec{
-				User:               user.Name,
+				User:               currentUser,
 				ResourceAttributes: &action,
 			},
 		}
@@ -211,7 +221,6 @@ func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
 
 		if resp.Status.Allowed {
 			allowed = true
-			break
 		}
 	}
 
@@ -221,4 +230,55 @@ func teamAdminAccess(r *Team, ns string, c kubernetes.Clientset) (err error) {
 	}
 	return nil
 
+}
+
+func NewMutatingWebhook(mgr manager.Manager) (*teamValidator, error) {
+	decoder, err := admission.NewDecoder(mgr.GetScheme())
+	if err != nil {
+		return nil, err
+	}
+	return &teamValidator{decoder: decoder}, nil
+}
+
+type teamValidator struct {
+	decoder *admission.Decoder
+}
+
+func (a *teamValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+	teamObj := &Team{}
+	errDecode := a.decoder.Decode(req, teamObj)
+	if errDecode != nil {
+		fmt.Println("Err Decode:", errDecode)
+		return admission.Errored(http.StatusInternalServerError, errDecode)
+	}
+
+	if req.Operation == admissionv1.Update {
+		errUpdate := ValidateUpdate(teamObj, req.UserInfo.Username)
+		if errUpdate != nil {
+			return admission.Errored(http.StatusUnprocessableEntity, errUpdate)
+		}
+		return admission.Allowed("Updated!")
+	}
+
+	if req.Operation == admissionv1.Create {
+		errCreate := ValidateCreate(teamObj, req.UserInfo.Username)
+		if errCreate != nil {
+			return admission.Errored(http.StatusUnprocessableEntity, errCreate)
+		}
+		return admission.Allowed("Created!")
+	}
+
+	if req.Operation == admissionv1.Delete {
+		errDelete := ValidateDelete(teamObj, req.UserInfo.Username)
+		if errDelete != nil {
+			return admission.Errored(http.StatusUnprocessableEntity, errDelete)
+		}
+		return admission.Allowed("Deleted!")
+	}
+
+	return admission.Allowed("done")
+}
+
+func (a *teamValidator) Default(ctx context.Context, obj runtime.Object) error {
+	return nil
 }

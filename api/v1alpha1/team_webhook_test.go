@@ -13,9 +13,10 @@ import (
 
 var _ = Describe("", func() {
 	var (
-		fooTeamName       = "foo-team"
-		fooTeamAdminName  = "foo-admin"
-		fooTeamNamespaces = []string{"default"}
+		fooTeamName        = "foo-team"
+		fooTeamAdminName   = "foo-admin"
+		fooTeamAdminsNames = []Admin{{Name: "admin"}, {Name: "foo-admin"}}
+		fooTeamNamespaces  = []string{"default"}
 	)
 	var (
 		err error
@@ -49,7 +50,8 @@ var _ = Describe("", func() {
 				TypeMeta:   fooTeam.TypeMeta,
 				ObjectMeta: fooTeam.ObjectMeta,
 				Spec: TeamSpec{
-					TeamAdmin: fooTeamAdminName,
+					TeamAdmin:  fooTeamAdminName,
+					TeamAdmins: fooTeamAdminsNames,
 					Projects: []Project{
 						{Name: "not-existing-namespace", EnvLabel: "staging"},
 					},
@@ -71,7 +73,8 @@ var _ = Describe("", func() {
 				TypeMeta:   fooTeam.TypeMeta,
 				ObjectMeta: fooTeam.ObjectMeta,
 				Spec: TeamSpec{
-					TeamAdmin: "not-existing-team-admin",
+					TeamAdmin:  "not-existing-team-admin",
+					TeamAdmins: []Admin{{Name: "not-existing-team-admin"}},
 					Projects: []Project{
 						{Name: "foo-namespace"},
 					},
@@ -92,8 +95,9 @@ var _ = Describe("", func() {
 				TypeMeta:   fooTeam.TypeMeta,
 				ObjectMeta: fooTeam.ObjectMeta,
 				Spec: TeamSpec{
-					TeamAdmin: fooTeamAdminName,
-					Projects:  []Project{{Name: fooTeamNamespaces[0]}},
+					TeamAdmin:  fooTeamAdminName,
+					TeamAdmins: fooTeamAdminsNames,
+					Projects:   []Project{{Name: fooTeamNamespaces[0]}},
 				},
 			}
 			err = k8sClient.Create(ctx, fooTeamTmp)
