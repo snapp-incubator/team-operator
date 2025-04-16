@@ -54,10 +54,10 @@ func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 //+kubebuilder:rbac:groups=authorization.k8s.io,resources=localsubjectaccessreviews,verbs=create
 //+kubebuilder:webhook:path=/validate-team-snappcloud-io-v1alpha1-team,mutating=false,failurePolicy=fail,sideEffects=None,groups=team.snappcloud.io,resources=teams,verbs=create;update,versions=v1alpha1,name=vteam.kb.io,admissionReviewVersions=v1
 
-func ValidateCreate(obj *Team, currentUser string) error {
+func (t *teamValidator) ValidateCreate(obj *Team, currentUser string) error {
 	var teamNS corev1.Namespace
 	teamlog.Info("validating team create", "name", obj.GetName())
-	clientSet, err := GetClientSet()
+	clientSet, err := GetClientSet(t.config)
 	if err != nil {
 		teamlog.Error(err, "error happened while validating create", "namespace", obj.GetNamespace(), "name", obj.GetName())
 		return errors.New("could not create client, failed to update team object")
@@ -92,13 +92,19 @@ func ValidateCreate(obj *Team, currentUser string) error {
 	return nil
 }
 
-func ValidateUpdate(obj *Team, currentUser string) error {
+func (t *teamValidator) ValidateUpdate(obj *Team, currentUser string) error {
 	var teamNS corev1.Namespace
 	var wg sync.WaitGroup
-	errChan := make(chan error)
+	var errChan chan error
+
+	if len(obj.Spec.Projects) > 1 {
+		errChan = make(chan error, len(obj.Spec.Projects))
+	} else {
+		errChan = make(chan error, 1)
+	}
 	teamlog.Info("validating team update", "name", obj.GetName())
 
-	clientSet, err := GetClientSet()
+	clientSet, err := GetClientSet(t.config)
 	if err != nil {
 		teamlog.Error(err, "error happened while validating update", "namespace", obj.GetNamespace(), "name", obj.GetName())
 		return errors.New("fail to get client, failed to update team object")
@@ -141,7 +147,10 @@ func ValidateUpdate(obj *Team, currentUser string) error {
 			errChan <- nil
 		}(ns)
 	}
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(errChan)
+	}()
 	for errThread := range errChan {
 		if errThread != nil {
 			return errThread
@@ -150,22 +159,16 @@ func ValidateUpdate(obj *Team, currentUser string) error {
 	return nil
 }
 
-func ValidateDelete(obj *Team, currentUser string) error {
+func (t *teamValidator) ValidateDelete(obj *Team, currentUser string) error {
 	teamlog.Info("validate delete", "name", obj.Name)
 	return nil
 }
 
-func GetClientSet() (c kubernetes.Clientset, err error) {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		teamlog.Error(err, "can not get in-cluster config.")
-		return c, errors.New("something went wrong please contact the cloud team")
-	}
-
-	clientSet, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		teamlog.Error(err, "can not create clientSet")
-		return *clientSet, errors.New("something went wrong please contact cloud team")
+func GetClientSet(config *rest.Config) (c kubernetes.Clientset, err error) {
+	clientSet, errConf := kubernetes.NewForConfig(config)
+	if errConf != nil {
+		teamlog.Error(errConf, "can not create clientSet")
+		return *clientSet, fmt.Errorf("something went wrong please contact cloud team: %s", errConf.Error())
 	}
 	return *clientSet, nil
 }
@@ -291,23 +294,24 @@ func NewMutatingWebhook(mgr manager.Manager) (*teamValidator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &teamValidator{decoder: decoder}, nil
+	return &teamValidator{decoder: decoder, config: mgr.GetConfig()}, nil
 }
 
 type teamValidator struct {
 	decoder *admission.Decoder
+	config  *rest.Config
 }
 
-func (a *teamValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (t *teamValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
 	teamObj := &Team{}
-	errDecode := a.decoder.Decode(req, teamObj)
+	errDecode := t.decoder.Decode(req, teamObj)
 	if errDecode != nil {
 		fmt.Println("Err Decode:", errDecode)
 		return admission.Errored(http.StatusInternalServerError, errDecode)
 	}
 
 	if req.Operation == admissionv1.Update {
-		errUpdate := ValidateUpdate(teamObj, req.UserInfo.Username)
+		errUpdate := t.ValidateUpdate(teamObj, req.UserInfo.Username)
 		if errUpdate != nil {
 			return admission.Errored(http.StatusUnprocessableEntity, errUpdate)
 		}
@@ -315,7 +319,7 @@ func (a *teamValidator) Handle(ctx context.Context, req admission.Request) admis
 	}
 
 	if req.Operation == admissionv1.Create {
-		errCreate := ValidateCreate(teamObj, req.UserInfo.Username)
+		errCreate := t.ValidateCreate(teamObj, req.UserInfo.Username)
 		if errCreate != nil {
 			return admission.Errored(http.StatusUnprocessableEntity, errCreate)
 		}
@@ -323,7 +327,7 @@ func (a *teamValidator) Handle(ctx context.Context, req admission.Request) admis
 	}
 
 	if req.Operation == admissionv1.Delete {
-		errDelete := ValidateDelete(teamObj, req.UserInfo.Username)
+		errDelete := t.ValidateDelete(teamObj, req.UserInfo.Username)
 		if errDelete != nil {
 			return admission.Errored(http.StatusUnprocessableEntity, errDelete)
 		}

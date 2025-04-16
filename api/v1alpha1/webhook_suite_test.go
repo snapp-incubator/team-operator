@@ -61,7 +61,7 @@ var _ = BeforeSuite(func() {
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
-		ErrorIfCRDPathMissing: false,
+		ErrorIfCRDPathMissing: true,
 		WebhookInstallOptions: envtest.WebhookInstallOptions{
 			Paths: []string{filepath.Join("..", "..", "config", "webhook")},
 		},
@@ -85,7 +85,7 @@ var _ = BeforeSuite(func() {
 
 	// start webhook server using Manager
 	webhookInstallOptions := &testEnv.WebhookInstallOptions
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+	mgr, errManager := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:             scheme.Scheme,
 		Host:               webhookInstallOptions.LocalServingHost,
 		Port:               webhookInstallOptions.LocalServingPort,
@@ -93,7 +93,7 @@ var _ = BeforeSuite(func() {
 		LeaderElection:     false,
 		MetricsBindAddress: "0",
 	})
-	Expect(err).NotTo(HaveOccurred())
+	Expect(errManager).NotTo(HaveOccurred())
 
 	teamValidator, errNewMutateWebhook := NewMutatingWebhook(mgr)
 	Expect(errNewMutateWebhook).To(BeNil())

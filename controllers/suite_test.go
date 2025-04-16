@@ -86,6 +86,7 @@ var _ = BeforeSuite(func() {
 	err = (&TeamReconciler{
 		Client: k8sManager.GetClient(),
 		Scheme: k8sManager.GetScheme(),
+		Config: cfg,
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 

@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/rest"
 
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -51,6 +52,7 @@ const (
 type TeamReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Config *rest.Config
 }
 
 //+kubebuilder:rbac:groups=team.snappcloud.io,resources=teams,verbs=get;list;watch;create;update;patch;delete
@@ -160,7 +162,7 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		Limit:         100,
 	}
 
-	clientSet, getClientSetErr := teamv1alpha1.GetClientSet()
+	clientSet, getClientSetErr := teamv1alpha1.GetClientSet(t.Config)
 	if getClientSetErr != nil {
 		return ctrl.Result{}, getClientSetErr
 	}

@@ -4,7 +4,6 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -61,8 +60,8 @@ var _ = Describe("", func() {
 			Expect(err).NotTo(BeNil())
 		})
 
-		It("should fail if TeamAdmin does not exist", func() {
-			ns := &v1.Namespace{
+		It("should pass if TeamAdmins does not exist", func() {
+			ns := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "foo-namespace",
 				},
@@ -73,7 +72,6 @@ var _ = Describe("", func() {
 				TypeMeta:   fooTeam.TypeMeta,
 				ObjectMeta: fooTeam.ObjectMeta,
 				Spec: TeamSpec{
-					TeamAdmin:  "not-existing-team-admin",
 					TeamAdmins: []Admin{{Name: "not-existing-team-admin"}},
 					Projects: []Project{
 						{Name: "foo-namespace"},
@@ -81,7 +79,7 @@ var _ = Describe("", func() {
 				},
 			}
 			err = k8sClient.Create(ctx, fooTeamTmp)
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(BeNil())
 		})
 
 		It("should fail if at least one namespace has team label from another team", func() {
