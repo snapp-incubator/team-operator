@@ -60,6 +60,7 @@ type TeamReconciler struct {
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups="",resources=namespaces/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",resources=namespaces/finalizers,verbs=update
+//+kubebuilder:rbac:groups="rbac.authorization.k8s.io",resources=rolebindings,verbs=get;list;watch;update;patch
 
 func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	loggerObj := log.FromContext(ctx)
