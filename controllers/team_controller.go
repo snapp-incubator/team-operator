@@ -22,6 +22,7 @@ import (
 
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -101,6 +102,11 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	metricTeamErr := t.CheckMetricNSForTeamIsCreated(ctx, req)
 	if metricTeamErr != nil {
 		return ctrl.Result{}, metricTeamErr
+	}
+
+	adminAccessToMetricNsErr := t.CheckMetricNSAdminAccessToTeamOwners(ctx, req, team)
+	if adminAccessToMetricNsErr != nil {
+		return ctrl.Result{}, adminAccessToMetricNsErr
 	}
 
 	updateAdminsErr := t.UpdateAdminsBackwardCompatibility(ctx, team)
@@ -265,6 +271,54 @@ func (t *TeamReconciler) CheckMetricNSForTeamIsCreated(ctx context.Context, req 
 				return errCreate
 			}
 		}
+	}
+	return nil
+}
+
+func (t *TeamReconciler) CheckMetricNSAdminAccessToTeamOwners(ctx context.Context, req ctrl.Request, team *teamv1alpha1.Team) error {
+	roleBindingName := "admin-access-team-operator"
+	namespaceName := team.Name + MetricNamespaceSuffix
+
+	var subjects []rbacv1.Subject
+	for _, admin := range team.Spec.TeamAdmins {
+		subjects = append(subjects, rbacv1.Subject{
+			Kind:     rbacv1.UserKind,
+			Name:     admin.Name,
+			APIGroup: rbacv1.GroupName,
+		})
+	}
+	roleBindingDesired := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      roleBindingName,
+			Namespace: namespaceName,
+		},
+		Subjects: subjects,
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "admin",
+			APIGroup: rbacv1.GroupName,
+		},
+	}
+
+	roleBinding := &rbacv1.RoleBinding{}
+	err := t.Get(ctx, client.ObjectKey{
+		Namespace: namespaceName,
+		Name:      roleBindingName,
+	}, roleBinding)
+
+	if err != nil && errors.IsNotFound(err) {
+		// Doesn't exist, so create it
+		if errCreate := t.Client.Create(ctx, roleBindingDesired); err != nil {
+			return errCreate
+		}
+	} else if err != nil {
+		return err
+	}
+
+	// exists so we check for updates
+	errUpdate := t.Client.Update(ctx, roleBindingDesired)
+	if errUpdate != nil {
+		return errUpdate
 	}
 	return nil
 }
