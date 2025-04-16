@@ -15,7 +15,7 @@ var _ = Describe("", func() {
 	var (
 		fooTeamName        = "foo-team"
 		fooTeamAdminName   = "foo-admin"
-		fooTeamAdminsNames = []Admin{{Name: "admin"}, {Name: "foo-admin"}}
+		fooTeamAdminsNames = []Admin{{Name: "foo-admin"}}
 		fooTeamNamespaces  = []string{"default"}
 	)
 	var (

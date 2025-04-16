@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"k8s.io/apimachinery/pkg/labels"
 
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -41,6 +42,8 @@ import (
 const (
 	MetricNamespaceSuffix    = "-team"
 	MetricNamespaceFinalizer = "batch.finalizers.kubebuilder.io/metric-namespace"
+	MetaDataLabelDataSource  = "snappcloud.io/datasource"
+	MetaDataLabelEnv         = "environment"
 	teamFinalizer            = "team.snappcloud.io/cleanup-team"
 )
 
@@ -115,9 +118,9 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			return ctrl.Result{}, err
 		}
 		namespace.Labels["snappcloud.io/team"] = team.GetName()
-		namespace.Labels["environment"] = ns.EnvLabel
+		namespace.Labels[MetaDataLabelEnv] = ns.EnvLabel
 		if ns.EnvLabel == teamv1alpha1.ProductionLabel {
-			namespace.Labels["snappcloud.io/datasource"] = "true"
+			namespace.Labels[MetaDataLabelDataSource] = "true"
 		}
 
 		if namespace.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -129,8 +132,9 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			}
 		} else {
 			if controllerutil.ContainsFinalizer(namespace, teamFinalizer) {
-				if err := t.finalizeNamespace(ctx, req, namespace, team); err != nil {
-					return ctrl.Result{}, err
+				if errFinalize := t.finalizeNamespace(ctx, namespace.Name, team); errFinalize != nil {
+					loggerObj.Error(errFinalize, "failed to finalize namespace", "namespace", ns.Name, "team", team.Name)
+					return ctrl.Result{}, errFinalize
 				}
 				controllerutil.RemoveFinalizer(namespace, teamFinalizer)
 				if err := t.Update(ctx, namespace); err != nil {
@@ -148,6 +152,48 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			return ctrl.Result{}, errUpdate
 		}
 	}
+
+	// add all namespaces with the current team label to the team object
+	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"snappcloud.io/team": team.Name}}
+	listOptions := metav1.ListOptions{
+		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
+		Limit:         100,
+	}
+
+	clientSet, getClientSetErr := teamv1alpha1.GetClientSet()
+	if getClientSetErr != nil {
+		return ctrl.Result{}, getClientSetErr
+	}
+	namespaces, err := clientSet.CoreV1().Namespaces().List(context.TODO(), listOptions)
+	if err != nil {
+		loggerObj.Error(err, "can not get list of namespaces")
+		return ctrl.Result{}, err
+	}
+
+	var namespacesToBeAdded []teamv1alpha1.Project
+	for _, ni := range namespaces.Items {
+		exists := false
+		for _, ns := range team.Spec.Projects {
+			if ni.Name == ns.Name {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			envLabel := ni.Labels[MetaDataLabelEnv]
+			if len(envLabel) == 0 {
+				envLabel = teamv1alpha1.StagingLabel
+			}
+			namespacesToBeAdded = append(namespacesToBeAdded, teamv1alpha1.Project{Name: ni.Name, EnvLabel: envLabel})
+		}
+	}
+
+	team.Spec.Projects = append(team.Spec.Projects, namespacesToBeAdded...)
+	errUpdateTeam := t.Client.Update(ctx, team)
+	if errUpdateTeam != nil {
+		return ctrl.Result{}, errUpdateTeam
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -281,25 +327,19 @@ func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(t)
 }
 
-func (t *TeamReconciler) finalizeNamespace(ctx context.Context, req ctrl.Request, ns *corev1.Namespace, team *teamv1alpha1.Team) error {
+func (t *TeamReconciler) finalizeNamespace(ctx context.Context, deletedNamespace string, team *teamv1alpha1.Team) error {
+	var desiredProjects []teamv1alpha1.Project
+	for _, namespace := range team.Spec.Projects {
+		if namespace.Name != deletedNamespace {
+			desiredProjects = append(desiredProjects, namespace)
+		}
+	}
 
-	for i, namespace := range team.Spec.Projects {
-		if namespace.Name == ns.Name {
-			team.Spec.Projects = append(team.Spec.Projects[:i], team.Spec.Projects[i+1:]...)
-			break
-		}
-	}
-	if _, ok := ns.Labels["snappcloud.io/team"]; ok {
-		delete(ns.Labels, "snappcloud.io/team")
-		if err := t.Client.Update(ctx, ns); err != nil {
-			return err
-		}
-	}
+	team.Spec.Projects = desiredProjects
 
 	if err := t.Client.Update(ctx, team); err != nil {
 		return err
 	}
 
 	return nil
-
 }

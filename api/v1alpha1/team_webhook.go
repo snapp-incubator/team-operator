@@ -24,7 +24,6 @@ import (
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -33,15 +32,16 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+	"strings"
 )
 
 // log is for logging in this package.
 var teamlog = logf.Log.WithName("team-resource")
 
 const (
-	MetricNamespaceSuffix = "-team"
-	StagingLabel          = "staging"
-	ProductionLabel       = "production"
+	StagingLabel       = "staging"
+	ProductionLabel    = "production"
+	NameSpaceSkipLabel = "snappcloud.io/pause-team-validation"
 )
 
 func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
@@ -55,12 +55,20 @@ func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 func ValidateCreate(obj *Team, currentUser string) error {
 	var teamNS corev1.Namespace
 	teamlog.Info("validating team create", "name", obj.GetName())
-	clientSet, err := getClient()
+	clientSet, err := GetClientSet()
 	if err != nil {
 		teamlog.Error(err, "error happened while validating create", "namespace", obj.GetNamespace(), "name", obj.GetName())
 		return errors.New("could not create client, failed to update team object")
 	}
 	for _, ns := range obj.Spec.Projects {
+		// Check if namespace has the label to be skipped by controller/webhook
+		shouldSkip, errSkip := nsSkips(clientSet, ns.Name)
+		if errSkip != nil {
+			return errSkip
+		} else if shouldSkip {
+			continue
+		}
+
 		// Check if namespace does not exist or has been deleted
 		teamNS, err = nsExists(clientSet, obj.Name, ns.Name)
 		if err != nil {
@@ -83,17 +91,25 @@ func ValidateCreate(obj *Team, currentUser string) error {
 }
 
 func ValidateUpdate(obj *Team, currentUser string) error {
-	var teamns corev1.Namespace
+	var teamNS corev1.Namespace
 	teamlog.Info("validating team update", "name", obj.GetName())
 
-	clientSet, err := getClient()
+	clientSet, err := GetClientSet()
 	if err != nil {
 		teamlog.Error(err, "error happened while validating update", "namespace", obj.GetNamespace(), "name", obj.GetName())
 		return errors.New("fail to get client, failed to update team object")
 	}
 	for _, ns := range obj.Spec.Projects {
+		// Check if namespace has the label to be skipped by controller/webhook
+		shouldSkip, errSkip := nsSkips(clientSet, ns.Name)
+		if errSkip != nil {
+			return errSkip
+		} else if shouldSkip {
+			continue
+		}
+
 		//check if namespace does not exist or has been deleted
-		teamns, err = nsExists(clientSet, obj.Name, ns.Name)
+		teamNS, err = nsExists(clientSet, obj.Name, ns.Name)
 		if err != nil {
 			return err
 		}
@@ -105,7 +121,7 @@ func ValidateUpdate(obj *Team, currentUser string) error {
 		}
 
 		//check if namespace already has been added to another team
-		err = nsHasTeam(obj, &teamns)
+		err = nsHasTeam(obj, &teamNS)
 		if err != nil {
 			return err
 		}
@@ -116,32 +132,6 @@ func ValidateUpdate(obj *Team, currentUser string) error {
 			return err
 		}
 	}
-
-	//prevent deleting a namespace that have the team label
-
-	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"snappcloud.io/team": obj.Name}}
-
-	listOptions := metav1.ListOptions{
-		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
-		Limit:         100,
-	}
-	namespaces, err := clientSet.CoreV1().Namespaces().List(context.TODO(), listOptions)
-	if err != nil {
-		teamlog.Error(err, "can not get list of namespaces")
-	}
-
-	for _, ni := range namespaces.Items {
-		exists := false
-		for _, ns := range obj.Spec.Projects {
-			if ni.Name == ns.Name {
-				exists = true
-			}
-		}
-		if !exists && ni.Name != obj.Name+MetricNamespaceSuffix {
-			errMessage := fmt.Sprintf("namespace \"%s\" has team label but does not exist in \"%s\" team", ni.Name, obj.Name)
-			return errors.New(errMessage)
-		}
-	}
 	return nil
 }
 
@@ -150,7 +140,7 @@ func ValidateDelete(obj *Team, currentUser string) error {
 	return nil
 }
 
-func getClient() (c kubernetes.Clientset, err error) {
+func GetClientSet() (c kubernetes.Clientset, err error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		teamlog.Error(err, "can not get in-cluster config.")
@@ -165,7 +155,18 @@ func getClient() (c kubernetes.Clientset, err error) {
 	return *clientSet, nil
 }
 
-func nsExists(c kubernetes.Clientset, team, ns string) (tns corev1.Namespace, err error) {
+func nsSkips(c kubernetes.Clientset, ns string) (bool, error) {
+	nsToCheck, errNSGet := c.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
+	if errNSGet != nil {
+		return false, errNSGet
+	}
+	if strings.ToLower(nsToCheck.Labels[NameSpaceSkipLabel]) == "true" {
+		return true, nil
+	}
+	return false, nil
+}
+
+func nsExists(c kubernetes.Clientset, team, ns string) (corev1.Namespace, error) {
 	teamNS, errNSGet := c.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
 
 	if errNSGet != nil {
@@ -185,7 +186,7 @@ func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 	return nil
 }
 
-func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) (err error) {
+func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) error {
 	var currentUserIsAdmin = false
 	var allowed = false
 	for _, user := range r.Spec.TeamAdmins {
@@ -200,6 +201,34 @@ func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) (e
 			Namespace: ns,
 			Verb:      "create",
 			Resource:  "rolebindings",
+			Group:     "rbac.authorization.k8s.io",
+			Version:   "v1",
+		}
+		check := authv1.LocalSubjectAccessReview{
+			ObjectMeta: metav1.ObjectMeta{Namespace: ns},
+			Spec: authv1.SubjectAccessReviewSpec{
+				User:               currentUser,
+				ResourceAttributes: &action,
+			},
+		}
+
+		resp, errAuth := c.AuthorizationV1().
+			LocalSubjectAccessReviews(ns).
+			Create(context.TODO(), &check, metav1.CreateOptions{})
+		if errAuth != nil {
+			teamlog.Error(errAuth, "error happened while checking team owner permission")
+			return errAuth
+		}
+
+		if resp.Status.Allowed {
+			allowed = true
+		}
+	} else {
+		// check if the user is cluster-admin
+		action := authv1.ResourceAttributes{
+			Namespace: ns,
+			Verb:      "create",
+			Resource:  "clusterrole",
 			Group:     "rbac.authorization.k8s.io",
 			Version:   "v1",
 		}
