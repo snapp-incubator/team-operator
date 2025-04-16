@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 	"strings"
+	"sync"
 )
 
 // log is for logging in this package.
@@ -93,6 +94,8 @@ func ValidateCreate(obj *Team, currentUser string) error {
 
 func ValidateUpdate(obj *Team, currentUser string) error {
 	var teamNS corev1.Namespace
+	var wg sync.WaitGroup
+	errChan := make(chan error)
 	teamlog.Info("validating team update", "name", obj.GetName())
 
 	clientSet, err := GetClientSet()
@@ -101,36 +104,47 @@ func ValidateUpdate(obj *Team, currentUser string) error {
 		return errors.New("fail to get client, failed to update team object")
 	}
 	for _, ns := range obj.Spec.Projects {
-		// Check if namespace has the label to be skipped by controller/webhook
-		shouldSkip, errSkip := nsSkips(clientSet, ns.Name, obj.Name)
-		if errSkip != nil {
-			return errSkip
-		} else if shouldSkip {
-			continue
-		}
+		wg.Add(1)
+		go func(ns Project) {
+			defer wg.Done()
+			// Check if namespace has the label to be skipped by controller/webhook
+			shouldSkip, errSkip := nsSkips(clientSet, ns.Name, obj.Name)
+			if errSkip != nil {
+				errChan <- errSkip
+			} else if shouldSkip {
+				errChan <- nil
+			}
 
-		//check if namespace does not exist or has been deleted
-		teamNS, err = nsExists(clientSet, obj.Name, ns.Name)
-		if err != nil {
-			return err
-		}
+			//check if namespace does not exist or has been deleted
+			teamNS, err = nsExists(clientSet, obj.Name, ns.Name)
+			if err != nil {
+				errChan <- err
+			}
 
-		//check to ensure the namespace has a correct label
-		if ns.EnvLabel != ProductionLabel && ns.EnvLabel != StagingLabel {
-			errMessage := fmt.Sprintf("namespace Label should be \"%s\" or \"%s\", its not a correct label", ProductionLabel, StagingLabel)
-			return errors.New(errMessage)
-		}
+			//check to ensure the namespace has a correct label
+			if ns.EnvLabel != ProductionLabel && ns.EnvLabel != StagingLabel {
+				errMessage := fmt.Sprintf("namespace Label should be \"%s\" or \"%s\", its not a correct label", ProductionLabel, StagingLabel)
+				errChan <- errors.New(errMessage)
+			}
 
-		//check if namespace already has been added to another team
-		err = nsHasTeam(obj, &teamNS)
-		if err != nil {
-			return err
-		}
+			//check if namespace already has been added to another team
+			err = nsHasTeam(obj, &teamNS)
+			if err != nil {
+				errChan <- err
+			}
 
-		//Check If user has access to this namespace
-		err = teamAdminAccess(obj, clientSet, ns.Name, currentUser)
-		if err != nil {
-			return err
+			//Check If user has access to this namespace
+			err = teamAdminAccess(obj, clientSet, ns.Name, currentUser)
+			if err != nil {
+				errChan <- err
+			}
+			errChan <- nil
+		}(ns)
+	}
+	wg.Wait()
+	for errThread := range errChan {
+		if errThread != nil {
+			return errThread
 		}
 	}
 	return nil
@@ -266,10 +280,6 @@ func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) er
 			return errors.New(errMessage)
 		} else if userIsClusterAdmin {
 			return fmt.Errorf("user is cluster-admin but an error happened")
-		}
-	} else {
-		if userIsClusterAdmin {
-			fmt.Println("Please do not use cluster-admin user to modify team objects")
 		}
 	}
 	return nil
