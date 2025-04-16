@@ -41,6 +41,7 @@ rules:
   resources:
   - rolebindings
   verbs:
+  - create
   - get
   - list
   - patch

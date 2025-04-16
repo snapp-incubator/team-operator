@@ -39,9 +39,10 @@ import (
 var teamlog = logf.Log.WithName("team-resource")
 
 const (
-	StagingLabel       = "staging"
-	ProductionLabel    = "production"
-	NameSpaceSkipLabel = "snappcloud.io/pause-team-validation"
+	MetricNamespaceSuffix = "-team"
+	StagingLabel          = "staging"
+	ProductionLabel       = "production"
+	NameSpaceSkipLabel    = "snappcloud.io/pause-team-validation"
 )
 
 func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
@@ -62,7 +63,7 @@ func ValidateCreate(obj *Team, currentUser string) error {
 	}
 	for _, ns := range obj.Spec.Projects {
 		// Check if namespace has the label to be skipped by controller/webhook
-		shouldSkip, errSkip := nsSkips(clientSet, ns.Name)
+		shouldSkip, errSkip := nsSkips(clientSet, ns.Name, obj.Name)
 		if errSkip != nil {
 			return errSkip
 		} else if shouldSkip {
@@ -101,7 +102,7 @@ func ValidateUpdate(obj *Team, currentUser string) error {
 	}
 	for _, ns := range obj.Spec.Projects {
 		// Check if namespace has the label to be skipped by controller/webhook
-		shouldSkip, errSkip := nsSkips(clientSet, ns.Name)
+		shouldSkip, errSkip := nsSkips(clientSet, ns.Name, obj.Name)
 		if errSkip != nil {
 			return errSkip
 		} else if shouldSkip {
@@ -155,7 +156,11 @@ func GetClientSet() (c kubernetes.Clientset, err error) {
 	return *clientSet, nil
 }
 
-func nsSkips(c kubernetes.Clientset, ns string) (bool, error) {
+func nsSkips(c kubernetes.Clientset, ns, teamName string) (bool, error) {
+	if ns == teamName+MetricNamespaceSuffix {
+		return true, nil
+	}
+
 	nsToCheck, errNSGet := c.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
 	if errNSGet != nil {
 		return false, errNSGet

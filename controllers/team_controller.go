@@ -22,7 +22,6 @@ import (
 
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -60,7 +59,7 @@ type TeamReconciler struct {
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups="",resources=namespaces/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",resources=namespaces/finalizers,verbs=update
-//+kubebuilder:rbac:groups="rbac.authorization.k8s.io",resources=rolebindings,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups="rbac.authorization.k8s.io",resources=rolebindings,verbs=create;get;list;watch;update;patch
 
 func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	loggerObj := log.FromContext(ctx)
@@ -103,11 +102,6 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	metricTeamErr := t.CheckMetricNSForTeamIsCreated(ctx, req)
 	if metricTeamErr != nil {
 		return ctrl.Result{}, metricTeamErr
-	}
-
-	adminAccessToMetricNsErr := t.CheckMetricNSAdminAccessToTeamOwners(ctx, req, team)
-	if adminAccessToMetricNsErr != nil {
-		return ctrl.Result{}, adminAccessToMetricNsErr
 	}
 
 	updateAdminsErr := t.UpdateAdminsBackwardCompatibility(ctx, team)
@@ -179,6 +173,9 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	var namespacesToBeAdded []teamv1alpha1.Project
 	for _, ni := range namespaces.Items {
+		if ni.Name == team.Name+MetricNamespaceSuffix {
+			continue
+		}
 		exists := false
 		for _, ns := range team.Spec.Projects {
 			if ni.Name == ns.Name {
@@ -276,54 +273,6 @@ func (t *TeamReconciler) CheckMetricNSForTeamIsCreated(ctx context.Context, req 
 	return nil
 }
 
-func (t *TeamReconciler) CheckMetricNSAdminAccessToTeamOwners(ctx context.Context, req ctrl.Request, team *teamv1alpha1.Team) error {
-	roleBindingName := "admin-access-team-operator"
-	namespaceName := team.Name + MetricNamespaceSuffix
-
-	var subjects []rbacv1.Subject
-	for _, admin := range team.Spec.TeamAdmins {
-		subjects = append(subjects, rbacv1.Subject{
-			Kind:     rbacv1.UserKind,
-			Name:     admin.Name,
-			APIGroup: rbacv1.GroupName,
-		})
-	}
-	roleBindingDesired := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      roleBindingName,
-			Namespace: namespaceName,
-		},
-		Subjects: subjects,
-		RoleRef: rbacv1.RoleRef{
-			Kind:     "ClusterRole",
-			Name:     "admin",
-			APIGroup: rbacv1.GroupName,
-		},
-	}
-
-	roleBinding := &rbacv1.RoleBinding{}
-	err := t.Get(ctx, client.ObjectKey{
-		Namespace: namespaceName,
-		Name:      roleBindingName,
-	}, roleBinding)
-
-	if err != nil && errors.IsNotFound(err) {
-		// Doesn't exist, so create it
-		if errCreate := t.Client.Create(ctx, roleBindingDesired); err != nil {
-			return errCreate
-		}
-	} else if err != nil {
-		return err
-	}
-
-	// exists so we check for updates
-	errUpdate := t.Client.Update(ctx, roleBindingDesired)
-	if errUpdate != nil {
-		return errUpdate
-	}
-	return nil
-}
-
 func (t *TeamReconciler) checkMetricNSForTeamIsDeleted(ctx context.Context, req ctrl.Request) error {
 	metricTeamNS := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -341,10 +290,9 @@ func (t *TeamReconciler) checkMetricNSForTeamIsDeleted(ctx context.Context, req 
 
 // SetupWithManager sets up the controller with the Manager.
 func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
-
 	labelPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		labels := obj.GetLabels()
-		_, exists := labels["snappcloud.io/team"]
+		labelsMap := obj.GetLabels()
+		_, exists := labelsMap["snappcloud.io/team"]
 		return exists
 	})
 
