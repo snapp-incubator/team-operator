@@ -37,17 +37,6 @@ rules:
   verbs:
   - create
 - apiGroups:
-  - rbac.authorization.k8s.io
-  resources:
-  - rolebindings
-  verbs:
-  - create
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - team.snappcloud.io
   resources:
   - teams

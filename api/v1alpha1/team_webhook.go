@@ -193,6 +193,7 @@ func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 
 func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) error {
 	var currentUserIsAdmin = false
+	var userIsClusterAdmin = false
 	var allowed = false
 	for _, user := range r.Spec.TeamAdmins {
 		if user.Name == currentUser {
@@ -255,12 +256,21 @@ func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) er
 
 		if resp.Status.Allowed {
 			allowed = true
+			userIsClusterAdmin = true
 		}
 	}
 
 	if !allowed {
-		errMessage := fmt.Sprintf("none of the team owners are allowed to add namespace \"%s\" to team \"%s\", please add at least one of team admins as admin of the project with the followig command: oc policy add-role-to-user admin <user> -n %s", ns, r.Name, ns)
-		return errors.New(errMessage)
+		if currentUserIsAdmin {
+			errMessage := fmt.Sprintf("Couldn't add namespace \"%s\" to team \"%s\", please add the current user (%s)?(is admin?:%v) as admin of the project with the followig command: oc policy add-role-to-user admin %s -n %s", ns, r.Name, currentUser, currentUserIsAdmin, currentUser, ns)
+			return errors.New(errMessage)
+		} else if userIsClusterAdmin {
+			return fmt.Errorf("user is cluster-admin but an error happened")
+		}
+	} else {
+		if userIsClusterAdmin {
+			fmt.Println("Please do not use cluster-admin user to modify team objects")
+		}
 	}
 	return nil
 
