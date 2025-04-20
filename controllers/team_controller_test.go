@@ -33,8 +33,8 @@ var _ = Describe("Testing Team", func() {
 			Kind:       "Team",
 		},
 		Spec: v1alpha1.TeamSpec{
-			TeamAdmin: teamAdmin,
-			Projects:  projects,
+			TeamAdmins: []v1alpha1.Admin{{Name: teamAdmin}},
+			Projects:   projects,
 		},
 	}
 

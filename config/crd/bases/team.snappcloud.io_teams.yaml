@@ -53,8 +53,6 @@ spec:
                   - name
                   type: object
                 type: array
-              teamAdmin:
-                type: string
               teamAdmins:
                 description: TeamAdmins is a list of Admin spec, who are the owners
                   of the Team

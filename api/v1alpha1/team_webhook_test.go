@@ -13,7 +13,6 @@ import (
 var _ = Describe("", func() {
 	var (
 		fooTeamName        = "foo-team"
-		fooTeamAdminName   = "foo-admin"
 		fooTeamAdminsNames = []Admin{{Name: "foo-admin"}}
 		fooTeamNamespaces  = []string{"default"}
 	)
@@ -49,7 +48,6 @@ var _ = Describe("", func() {
 				TypeMeta:   fooTeam.TypeMeta,
 				ObjectMeta: fooTeam.ObjectMeta,
 				Spec: TeamSpec{
-					TeamAdmin:  fooTeamAdminName,
 					TeamAdmins: fooTeamAdminsNames,
 					Projects: []Project{
 						{Name: "not-existing-namespace", EnvLabel: "staging"},
@@ -60,7 +58,7 @@ var _ = Describe("", func() {
 			Expect(err).NotTo(BeNil())
 		})
 
-		It("should pass if TeamAdmins does not exist", func() {
+		It("should fail if TeamAdmins does not exist", func() {
 			ns := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "foo-namespace",
@@ -79,7 +77,7 @@ var _ = Describe("", func() {
 				},
 			}
 			err = k8sClient.Create(ctx, fooTeamTmp)
-			Expect(err).To(BeNil())
+			Expect(err).NotTo(BeNil())
 		})
 
 		It("should fail if at least one namespace has team label from another team", func() {
@@ -93,7 +91,6 @@ var _ = Describe("", func() {
 				TypeMeta:   fooTeam.TypeMeta,
 				ObjectMeta: fooTeam.ObjectMeta,
 				Spec: TeamSpec{
-					TeamAdmin:  fooTeamAdminName,
 					TeamAdmins: fooTeamAdminsNames,
 					Projects:   []Project{{Name: fooTeamNamespaces[0]}},
 				},
