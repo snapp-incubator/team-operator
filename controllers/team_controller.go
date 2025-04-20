@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 
@@ -114,11 +115,6 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			loggerObj.Error(err, "failed to get namespace", "namespace", ns.Name)
 			return ctrl.Result{}, err
 		}
-		namespace.Labels["snappcloud.io/team"] = team.GetName()
-		namespace.Labels[MetaDataLabelEnv] = ns.EnvLabel
-		if ns.EnvLabel == teamv1alpha1.ProductionLabel {
-			namespace.Labels[MetaDataLabelDataSource] = "true"
-		}
 
 		if namespace.ObjectMeta.DeletionTimestamp.IsZero() {
 			if !controllerutil.ContainsFinalizer(namespace, teamFinalizer) {
@@ -141,6 +137,14 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 			// Stop reconciliation as the item is being deleted
 			return ctrl.Result{}, nil
+		}
+
+		currentEnv := namespace.Labels[MetaDataLabelEnv]
+		loggerObj.Info(fmt.Sprintf("Updating Team: %s Namespace: %s CurrentEnv: %v DesiredEnv: %s", team.GetName(), ns.Name, currentEnv, ns.EnvLabel))
+		namespace.Labels["snappcloud.io/team"] = team.GetName()
+		namespace.Labels[MetaDataLabelEnv] = ns.EnvLabel
+		if ns.EnvLabel == teamv1alpha1.ProductionLabel {
+			namespace.Labels[MetaDataLabelDataSource] = "true"
 		}
 
 		errUpdate := t.Client.Update(ctx, namespace)
