@@ -105,11 +105,6 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, metricTeamErr
 	}
 
-	updateAdminsErr := t.UpdateAdminsBackwardCompatibility(ctx, team)
-	if updateAdminsErr != nil {
-		return ctrl.Result{}, updateAdminsErr
-	}
-
 	// adding team label for each namespace in team spec
 	for _, ns := range team.Spec.Projects {
 		namespace := &corev1.Namespace{}
@@ -200,25 +195,6 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	return ctrl.Result{}, nil
-}
-
-func (t *TeamReconciler) UpdateAdminsBackwardCompatibility(ctx context.Context, team *teamv1alpha1.Team) error {
-	var oldAdminExists = false
-	for _, user := range team.Spec.TeamAdmins {
-		if user.Name == team.Spec.TeamAdmin {
-			oldAdminExists = true
-			break
-		}
-	}
-
-	if !oldAdminExists {
-		team.Spec.TeamAdmins = append(team.Spec.TeamAdmins, teamv1alpha1.Admin{Name: team.Spec.TeamAdmin})
-		err := t.Client.Update(ctx, team)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (t *TeamReconciler) CheckMetricNSFinalizerIsAdded(ctx context.Context, team *teamv1alpha1.Team) error {

@@ -220,32 +220,7 @@ func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) er
 	}
 
 	if currentUserIsAdmin {
-		action := authv1.ResourceAttributes{
-			Namespace: ns,
-			Verb:      "create",
-			Resource:  "rolebindings",
-			Group:     "rbac.authorization.k8s.io",
-			Version:   "v1",
-		}
-		check := authv1.LocalSubjectAccessReview{
-			ObjectMeta: metav1.ObjectMeta{Namespace: ns},
-			Spec: authv1.SubjectAccessReviewSpec{
-				User:               currentUser,
-				ResourceAttributes: &action,
-			},
-		}
-
-		resp, errAuth := c.AuthorizationV1().
-			LocalSubjectAccessReviews(ns).
-			Create(context.TODO(), &check, metav1.CreateOptions{})
-		if errAuth != nil {
-			teamlog.Error(errAuth, "error happened while checking team owner permission")
-			return errAuth
-		}
-
-		if resp.Status.Allowed {
-			allowed = true
-		}
+		allowed = true
 	} else {
 		// check if the user is cluster-admin
 		action := authv1.ResourceAttributes{
@@ -268,7 +243,7 @@ func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) er
 			Create(context.TODO(), &check, metav1.CreateOptions{})
 		if errAuth != nil {
 			teamlog.Error(errAuth, "error happened while checking team owner permission")
-			return errAuth
+			return fmt.Errorf("user %s is not able to modify team %s. error: %v", currentUser, r.Name, errAuth)
 		}
 
 		if resp.Status.Allowed {
@@ -279,10 +254,11 @@ func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) er
 
 	if !allowed {
 		if currentUserIsAdmin {
-			errMessage := fmt.Sprintf("Couldn't add namespace \"%s\" to team \"%s\", please add the current user (%s)?(is admin?:%v) as admin of the project with the followig command: oc policy add-role-to-user admin %s -n %s", ns, r.Name, currentUser, currentUserIsAdmin, currentUser, ns)
-			return errors.New(errMessage)
+			return fmt.Errorf("user %s is teamAdmin but is not allowed to modify team object", currentUser)
 		} else if userIsClusterAdmin {
 			return fmt.Errorf("user is cluster-admin but an error happened")
+		} else {
+			return fmt.Errorf("user %s is not allowed to edit team object, please add %s to teamAdmins", currentUser, currentUser)
 		}
 	}
 	return nil

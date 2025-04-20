@@ -36,7 +36,6 @@ type Admin struct {
 type TeamSpec struct {
 	// TeamAdmins is a list of Admin spec, who are the owners of the Team
 	TeamAdmins []Admin `json:"teamAdmins,omitempty"`
-	TeamAdmin  string  `json:"teamAdmin,omitempty"`
 	// Projects is a list of Project spec, which specify a project/namespace in k8s
 	Projects []Project `json:"projects,omitempty"`
 }
