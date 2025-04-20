@@ -44,6 +44,7 @@ const (
 	StagingLabel          = "staging"
 	ProductionLabel       = "production"
 	NameSpaceSkipLabel    = "snappcloud.io/pause-team-validation"
+	ServiceAccount        = "system:serviceaccount:team-operator-system:team-operator-controller-manager"
 )
 
 func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
@@ -211,7 +212,10 @@ func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) error {
 	var currentUserIsAdmin = false
 	var userIsClusterAdmin = false
+	var userIsServiceAccount = false
 	var allowed = false
+
+	// check if username is inside the teamAdmins list
 	for _, user := range r.Spec.TeamAdmins {
 		if user.Name == currentUser {
 			currentUserIsAdmin = true
@@ -219,7 +223,12 @@ func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) er
 		}
 	}
 
-	if currentUserIsAdmin {
+	// check if username is service account
+	if currentUser == ServiceAccount {
+		userIsServiceAccount = true
+	}
+
+	if currentUserIsAdmin || userIsServiceAccount {
 		allowed = true
 	} else {
 		// check if the user is cluster-admin
