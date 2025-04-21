@@ -110,6 +110,25 @@ func (t *teamValidator) ValidateUpdate(obj *Team, currentUser string) error {
 		teamlog.Error(err, "error happened while validating update", "namespace", obj.GetNamespace(), "name", obj.GetName())
 		return errors.New("fail to get client, failed to update team object")
 	}
+
+	// seenProjects will prevent duplicate projects
+	var seenProjects []Project
+	var seenNS = false
+	for _, objNS := range obj.Spec.Projects {
+		seenNS = false
+		for _, objSeenNS := range seenProjects {
+			if objNS.Name == objSeenNS.Name {
+				seenNS = true
+				break
+			}
+		}
+		if !seenNS {
+			seenProjects = append(seenProjects, objNS)
+		} else {
+			return fmt.Errorf("duplicate project %s", objNS.Name)
+		}
+	}
+
 	for _, ns := range obj.Spec.Projects {
 		wg.Add(1)
 		go func(ns Project) {
