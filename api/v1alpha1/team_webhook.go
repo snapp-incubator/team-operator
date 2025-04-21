@@ -316,7 +316,7 @@ func (t *teamValidator) Handle(ctx context.Context, req admission.Request) admis
 	if req.Operation == admissionv1.Update {
 		errUpdate := t.ValidateUpdate(teamObj, req.UserInfo.Username)
 		if errUpdate != nil {
-			return admission.Errored(http.StatusUnprocessableEntity, errUpdate)
+			return admission.Denied(errUpdate.Error())
 		}
 		return admission.Allowed("Updated!")
 	}
@@ -324,7 +324,7 @@ func (t *teamValidator) Handle(ctx context.Context, req admission.Request) admis
 	if req.Operation == admissionv1.Create {
 		errCreate := t.ValidateCreate(teamObj, req.UserInfo.Username)
 		if errCreate != nil {
-			return admission.Errored(http.StatusUnprocessableEntity, errCreate)
+			return admission.Denied(errCreate.Error())
 		}
 		return admission.Allowed("Created!")
 	}
@@ -332,7 +332,7 @@ func (t *teamValidator) Handle(ctx context.Context, req admission.Request) admis
 	if req.Operation == admissionv1.Delete {
 		errDelete := t.ValidateDelete(teamObj, req.UserInfo.Username)
 		if errDelete != nil {
-			return admission.Errored(http.StatusUnprocessableEntity, errDelete)
+			return admission.Denied(errDelete.Error())
 		}
 		return admission.Allowed("Deleted!")
 	}
