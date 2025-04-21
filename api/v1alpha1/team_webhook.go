@@ -113,9 +113,8 @@ func (t *teamValidator) ValidateUpdate(obj *Team, currentUser string) error {
 
 	// seenProjects will prevent duplicate projects
 	var seenProjects []Project
-	var seenNS = false
 	for _, objNS := range obj.Spec.Projects {
-		seenNS = false
+		seenNS := false
 		for _, objSeenNS := range seenProjects {
 			if objNS.Name == objSeenNS.Name {
 				seenNS = true
