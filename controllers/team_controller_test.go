@@ -14,11 +14,15 @@ import (
 )
 
 var (
-	teamAdmin = "user-test"
-	teamName  = "test-cloud"
-	projects  = []v1alpha1.Project{
+	teamName   = "test-cloud"
+	teamAdmins = []v1alpha1.Admin{{Name: "user-test"}}
+	projects   = []v1alpha1.Project{
 		{Name: "test-ns-1", EnvLabel: "staging"},
 		{Name: "test-ns-2", EnvLabel: "production"},
+	}
+	updateProjects = []v1alpha1.Project{
+		{Name: "test-ns-1", EnvLabel: "production"},
+		{Name: "test-ns-2", EnvLabel: "staging"},
 	}
 )
 
@@ -33,7 +37,7 @@ var _ = Describe("Testing Team", func() {
 			Kind:       "Team",
 		},
 		Spec: v1alpha1.TeamSpec{
-			TeamAdmins: []v1alpha1.Admin{{Name: teamAdmin}},
+			TeamAdmins: teamAdmins,
 			Projects:   projects,
 		},
 	}
@@ -71,17 +75,37 @@ var _ = Describe("Testing Team", func() {
 			Expect(err).To(BeNil())
 		})
 
-		It("all namespaces should have the team and datasource labels", func() {
+		It("all namespaces should have the team label and correct environment", func() {
 			for _, ns := range projects {
 				nsObj := &corev1.Namespace{}
 				errNS := k8sClient.Get(ctx, types.NamespacedName{Name: ns.Name}, nsObj)
 				Expect(errNS).To(BeNil())
 				Expect(nsObj.ObjectMeta.Labels["snappcloud.io/team"]).To(Equal(teamName))
+				Expect(nsObj.ObjectMeta.Labels[MetaDataLabelEnv]).To(Equal(ns.EnvLabel))
 
 				nsMetricObj := &corev1.Namespace{}
 				errMetric := k8sClient.Get(ctx, types.NamespacedName{Name: teamName + MetricNamespaceSuffix}, nsMetricObj)
 				Expect(errMetric).To(BeNil())
 				Expect(nsMetricObj.ObjectMeta.Labels["snappcloud.io/team"]).To(Equal(teamName))
+			}
+		})
+
+		It("after updating team object, new envLabels should be applied", func() {
+			var updateTeam = &v1alpha1.Team{}
+			errGetTeam := k8sClient.Get(ctx, types.NamespacedName{Name: teamName}, updateTeam)
+			Expect(errGetTeam).To(BeNil())
+
+			updateTeam.Spec.Projects = updateProjects
+			errUpdateTeam := k8sClient.Update(ctx, updateTeam)
+			Expect(errUpdateTeam).To(BeNil())
+
+			time.Sleep(5 * time.Second)
+			for _, ns := range updateProjects {
+				nsObj := &corev1.Namespace{}
+				errNS := k8sClient.Get(ctx, types.NamespacedName{Name: ns.Name}, nsObj)
+				Expect(errNS).To(BeNil())
+				Expect(nsObj.ObjectMeta.Labels["snappcloud.io/team"]).To(Equal(teamName))
+				Expect(nsObj.ObjectMeta.Labels[MetaDataLabelEnv]).To(Equal(ns.EnvLabel))
 			}
 		})
 

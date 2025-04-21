@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 
@@ -33,7 +34,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -42,11 +42,11 @@ import (
 )
 
 const (
-	MetricNamespaceSuffix    = "-team"
-	MetricNamespaceFinalizer = "batch.finalizers.kubebuilder.io/metric-namespace"
-	MetaDataLabelDataSource  = "snappcloud.io/datasource"
-	MetaDataLabelEnv         = "environment"
-	teamFinalizer            = "team.snappcloud.io/cleanup-team"
+	MetricNamespaceSuffix      = "-team"
+	TeamObjectFinalizer        = "batch.finalizers.kubebuilder.io/metric-namespace"
+	MetaDataLabelDataSource    = "snappcloud.io/datasource"
+	MetaDataLabelEnv           = "environment"
+	TeamProjectObjectFinalizer = "team.snappcloud.io/cleanup-team"
 )
 
 // TeamReconciler reconciles a Team object
@@ -66,77 +66,56 @@ type TeamReconciler struct {
 func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	loggerObj := log.FromContext(ctx)
 
-	team := &teamv1alpha1.Team{}
-
-	errClient := t.Client.Get(ctx, req.NamespacedName, team)
-	if errClient != nil {
-		if apierrors.IsNotFound(errClient) {
-			loggerObj.Info("team resource not found. Ignoring since the object must be deleted", "team", req.NamespacedName)
-			errClient = t.checkMetricNSForTeamIsDeleted(ctx, req)
-			if errClient != nil {
-				return ctrl.Result{}, errClient
-			}
-			return ctrl.Result{}, nil
-		}
-		loggerObj.Error(errClient, "Failed to get team", "team", req.NamespacedName)
-		return ctrl.Result{}, errClient
-	}
-
-	if !team.ObjectMeta.GetDeletionTimestamp().IsZero() {
-		errNSDeleted := t.checkMetricNSForTeamIsDeleted(ctx, req)
-		if errNSDeleted != nil && !errors.IsNotFound(errNSDeleted) {
-			return ctrl.Result{}, errNSDeleted
-		}
-		if controllerutil.ContainsFinalizer(team, MetricNamespaceFinalizer) {
-			controllerutil.RemoveFinalizer(team, MetricNamespaceFinalizer)
-			if errNSDeleted = t.Client.Update(ctx, team); errNSDeleted != nil {
-				return ctrl.Result{}, errNSDeleted
-			}
-		}
+	team, errGetTeam, teamDeleted := t.GetTeamObj(ctx, req, loggerObj)
+	if errGetTeam != nil {
+		loggerObj.Error(errGetTeam, "failed to get team object", "team", team.GetName())
+		return ctrl.Result{Requeue: true}, errGetTeam
+	} else if teamDeleted {
 		return ctrl.Result{}, nil
 	}
 
-	errAddFinalizer := t.CheckMetricNSFinalizerIsAdded(ctx, team)
-	if errAddFinalizer != nil {
-		return ctrl.Result{}, errAddFinalizer
+	errHandleTeamDelete := t.DeleteTeamIfRequired(ctx, req, team, loggerObj)
+	if errHandleTeamDelete != nil {
+		loggerObj.Error(errHandleTeamDelete, "failed to delete team when deletionTimeStamp is not zero", "team", team.GetName())
+		return ctrl.Result{Requeue: true}, errHandleTeamDelete
 	}
 
-	metricTeamErr := t.CheckMetricNSForTeamIsCreated(ctx, req)
+	errAddTeamFinalizer := t.AddTeamObjectFinalizer(ctx, team)
+	if errAddTeamFinalizer != nil {
+		loggerObj.Error(errAddTeamFinalizer, "failed to add finalizer to team object", "team", team.GetName())
+		return ctrl.Result{Requeue: true}, errAddTeamFinalizer
+	}
+
+	metricTeamErr := t.CreateTeamMetricNS(ctx, req)
 	if metricTeamErr != nil {
+		loggerObj.Error(metricTeamErr, "failed to create metric namespace", "team", team.GetName())
 		return ctrl.Result{}, metricTeamErr
 	}
 
-	// adding team label for each namespace in team spec
+	// update Namespaces in Team Projects
 	for _, ns := range team.Spec.Projects {
 		namespace := &corev1.Namespace{}
-
-		err := t.Client.Get(ctx, types.NamespacedName{Name: ns.Name}, namespace)
-		if err != nil {
-			loggerObj.Error(err, "failed to get namespace", "namespace", ns.Name)
-			return ctrl.Result{}, err
+		errGetNS := t.Client.Get(ctx, types.NamespacedName{Name: ns.Name}, namespace)
+		if errGetNS != nil && apierrors.IsNotFound(errGetNS) {
+			loggerObj.Error(errGetNS, "failed to get namespace", "team", team.GetName(), "namespace", ns.Name)
+			return ctrl.Result{Requeue: true}, errGetNS
 		}
 
 		if namespace.ObjectMeta.DeletionTimestamp.IsZero() {
-			if !controllerutil.ContainsFinalizer(namespace, teamFinalizer) {
-				controllerutil.AddFinalizer(namespace, teamFinalizer)
-				if err := t.Update(ctx, namespace); err != nil {
-					return ctrl.Result{}, err
-				}
+			errAddProjectFinalizer := t.AddTeamProjectFinalizer(ctx, namespace)
+			if errAddProjectFinalizer != nil {
+				loggerObj.Error(errAddProjectFinalizer, "Couldn't add the finalizer to namespace", "team", team.GetName(), "namespace", ns.Name, "envLabel", ns.EnvLabel)
+				return ctrl.Result{Requeue: true}, errAddProjectFinalizer
 			}
 		} else {
-			if controllerutil.ContainsFinalizer(namespace, teamFinalizer) {
-				if errFinalize := t.finalizeNamespace(ctx, namespace.Name, team); errFinalize != nil {
-					loggerObj.Error(errFinalize, "failed to finalize namespace", "namespace", ns.Name, "team", team.Name)
-					return ctrl.Result{}, errFinalize
-				}
-				controllerutil.RemoveFinalizer(namespace, teamFinalizer)
-				if err := t.Update(ctx, namespace); err != nil {
-					return ctrl.Result{}, err
-				}
+			errDeleteProjectFinalizer := t.DeleteTeamProjectFinalizer(ctx, namespace, team)
+			if errDeleteProjectFinalizer != nil {
+				loggerObj.Error(errDeleteProjectFinalizer, "Couldn't delete the finalizer from namespace", "team", team.GetName(), "namespace", ns.Name, "envLabel", ns.EnvLabel)
+				return ctrl.Result{Requeue: true}, errDeleteProjectFinalizer
 			}
 
 			// Stop reconciliation as the item is being deleted
-			return ctrl.Result{}, nil
+			return ctrl.Result{Requeue: true}, nil
 		}
 
 		currentEnv := namespace.Labels[MetaDataLabelEnv]
@@ -172,11 +151,12 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	var namespacesToBeAdded []teamv1alpha1.Project
+	var exists bool
 	for _, ni := range namespaces.Items {
 		if ni.Name == team.Name+MetricNamespaceSuffix {
 			continue
 		}
-		exists := false
+		exists = false
 		for _, ns := range team.Spec.Projects {
 			if ni.Name == ns.Name {
 				exists = true
@@ -199,74 +179,6 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	return ctrl.Result{}, nil
-}
-
-func (t *TeamReconciler) CheckMetricNSFinalizerIsAdded(ctx context.Context, team *teamv1alpha1.Team) error {
-	if !controllerutil.ContainsFinalizer(team, MetricNamespaceFinalizer) {
-		controllerutil.AddFinalizer(team, MetricNamespaceFinalizer)
-		err := t.Client.Update(ctx, team)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (t *TeamReconciler) CheckMetricNSForTeamIsCreated(ctx context.Context, req ctrl.Request) error {
-	desiredName := req.Name + MetricNamespaceSuffix
-	metricTeamNS := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: desiredName,
-			Labels: map[string]string{
-				"snappcloud.io/team": req.Name,
-			},
-		},
-	}
-
-	nsTmp := &corev1.Namespace{}
-	errGet := t.Client.Get(ctx, types.NamespacedName{Name: desiredName}, nsTmp)
-	if errGet != nil {
-		errCreate := t.Client.Create(ctx, metricTeamNS)
-		if errCreate != nil {
-			if !errors.IsAlreadyExists(errCreate) {
-				return errCreate
-			}
-		}
-	}
-
-	var hasTeam = false
-	for key, value := range nsTmp.ObjectMeta.Labels {
-		if key == "snappcloud.io/team" {
-			if value == req.Name {
-				hasTeam = true
-				break
-			}
-		}
-	}
-	if !hasTeam {
-		errCreate := t.Client.Update(ctx, metricTeamNS)
-		if errCreate != nil {
-			if !errors.IsAlreadyExists(errCreate) {
-				return errCreate
-			}
-		}
-	}
-	return nil
-}
-
-func (t *TeamReconciler) checkMetricNSForTeamIsDeleted(ctx context.Context, req ctrl.Request) error {
-	metricTeamNS := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: req.Name + MetricNamespaceSuffix,
-		},
-	}
-	err := t.Client.Delete(ctx, metricTeamNS)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return err
-		}
-	}
-	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -311,19 +223,46 @@ func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(t)
 }
 
-func (t *TeamReconciler) finalizeNamespace(ctx context.Context, deletedNamespace string, team *teamv1alpha1.Team) error {
-	var desiredProjects []teamv1alpha1.Project
-	for _, namespace := range team.Spec.Projects {
-		if namespace.Name != deletedNamespace {
-			desiredProjects = append(desiredProjects, namespace)
+// GetTeamObj returns the team object, error and a bool that indicates if team has been removed
+func (t *TeamReconciler) GetTeamObj(ctx context.Context, req ctrl.Request, loggerObj logr.Logger) (*teamv1alpha1.Team, error, bool) {
+	team := &teamv1alpha1.Team{}
+	errGetTeam := t.Client.Get(ctx, req.NamespacedName, team)
+	if errGetTeam != nil {
+		// check if team is already deleted or not
+		if apierrors.IsNotFound(errGetTeam) {
+			loggerObj.Info("team resource not found. Ignoring since the object must be deleted", "team", req.NamespacedName)
+			// remove the Metric Namespace when the team object is removed
+			errDeleteMetricNS := t.DeleteTeamMetricNS(ctx, req)
+			if errDeleteMetricNS != nil {
+				loggerObj.Error(errDeleteMetricNS, "couldn't delete metric namespace", "team", team.GetName())
+				return nil, errDeleteMetricNS, false
+			}
+			return nil, nil, true
+		} else {
+			loggerObj.Error(errGetTeam, "Failed to get team", "team", team.GetName())
+			return nil, errGetTeam, false
 		}
 	}
+	return team, nil, false
+}
 
-	team.Spec.Projects = desiredProjects
+func (t *TeamReconciler) DeleteTeamIfRequired(ctx context.Context, req ctrl.Request, team *teamv1alpha1.Team, loggerObj logr.Logger) error {
+	// check if controller should delete the team
+	if !team.ObjectMeta.GetDeletionTimestamp().IsZero() {
+		// TODO: Remove team.Spec.Projects finalizers
 
-	if err := t.Client.Update(ctx, team); err != nil {
-		return err
+		// remove the Metric Namespace
+		errNSDeleted := t.DeleteTeamMetricNS(ctx, req)
+		if errNSDeleted != nil && !errors.IsNotFound(errNSDeleted) {
+			return errNSDeleted
+		}
+
+		// remove the team finalizer
+		errNSDeleteFinalizer := t.DeleteTeamObjectFinalizer(ctx, team)
+		if errNSDeleteFinalizer != nil {
+			return errNSDeleteFinalizer
+		}
+		return nil
 	}
-
 	return nil
 }
