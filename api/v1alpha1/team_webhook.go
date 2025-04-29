@@ -219,7 +219,7 @@ func nsExists(c kubernetes.Clientset, team, ns string) (corev1.Namespace, error)
 
 func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 	if val, ok := tns.Labels["snappcloud.io/team"]; ok {
-		if tns.Labels["snappcloud.io/team"] != r.Name {
+		if val != r.Name && val != "unkown" {
 			errorResp := fmt.Sprintf("namespace \"%s\" inside the Namespaces of team \"%s\" already has the team label \"%s\", please ask in cloud-support if you need to detach the namespace from previous team", tns.Name, r.Name, val)
 			return errors.New(errorResp)
 		}
