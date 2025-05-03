@@ -20,6 +20,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+
 	admissionv1 "k8s.io/api/admission/v1"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -27,13 +31,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"net/http"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
-	"strings"
-	"sync"
 )
 
 // log is for logging in this package.
@@ -219,7 +220,7 @@ func nsExists(c kubernetes.Clientset, team, ns string) (corev1.Namespace, error)
 
 func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 	if val, ok := tns.Labels["snappcloud.io/team"]; ok {
-		if tns.Labels["snappcloud.io/team"] != r.Name {
+		if val != r.Name && val != "unknown" {
 			errorResp := fmt.Sprintf("namespace \"%s\" inside the Namespaces of team \"%s\" already has the team label \"%s\", please ask in cloud-support if you need to detach the namespace from previous team", tns.Name, r.Name, val)
 			return errors.New(errorResp)
 		}
