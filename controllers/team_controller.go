@@ -102,20 +102,24 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 
 		if namespace.ObjectMeta.DeletionTimestamp.IsZero() {
-			errAddProjectFinalizer := t.AddTeamProjectFinalizer(ctx, namespace)
-			if errAddProjectFinalizer != nil {
-				loggerObj.Error(errAddProjectFinalizer, "Couldn't add the finalizer to namespace", "team", team.GetName(), "namespace", ns.Name, "envLabel", ns.EnvLabel)
-				return ctrl.Result{Requeue: true}, errAddProjectFinalizer
+			if team.GetName() != "ode" {
+				errAddProjectFinalizer := t.AddTeamProjectFinalizer(ctx, namespace)
+				if errAddProjectFinalizer != nil {
+					loggerObj.Error(errAddProjectFinalizer, "Couldn't add the finalizer to namespace", "team", team.GetName(), "namespace", ns.Name, "envLabel", ns.EnvLabel)
+					return ctrl.Result{Requeue: true}, errAddProjectFinalizer
+				}
 			}
 		} else {
-			errDeleteProjectFinalizer := t.DeleteTeamProjectFinalizer(ctx, namespace, team)
-			if errDeleteProjectFinalizer != nil {
-				loggerObj.Error(errDeleteProjectFinalizer, "Couldn't delete the finalizer from namespace", "team", team.GetName(), "namespace", ns.Name, "envLabel", ns.EnvLabel)
-				return ctrl.Result{Requeue: true}, errDeleteProjectFinalizer
-			}
+			if team.GetName() != "ode" {
+				errDeleteProjectFinalizer := t.DeleteTeamProjectFinalizer(ctx, namespace, team)
+				if errDeleteProjectFinalizer != nil {
+					loggerObj.Error(errDeleteProjectFinalizer, "Couldn't delete the finalizer from namespace", "team", team.GetName(), "namespace", ns.Name, "envLabel", ns.EnvLabel)
+					return ctrl.Result{Requeue: true}, errDeleteProjectFinalizer
+				}
 
-			// Stop reconciliation as the item is being deleted
-			return ctrl.Result{Requeue: true}, nil
+				// Stop reconciliation as the item is being deleted
+				return ctrl.Result{Requeue: true}, nil
+			}
 		}
 
 		currentEnv := namespace.Labels[MetaDataLabelEnv]
