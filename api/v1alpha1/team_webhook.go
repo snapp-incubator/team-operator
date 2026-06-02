@@ -18,11 +18,14 @@ package v1alpha1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	authv1 "k8s.io/api/authorization/v1"
@@ -41,12 +44,26 @@ import (
 var teamlog = logf.Log.WithName("team-resource")
 
 const (
-	MetricNamespaceSuffix = "-team"
-	StagingLabel          = "staging"
-	ProductionLabel       = "production"
-	NameSpaceSkipLabel    = "snappcloud.io/pause-team-validation"
-	ServiceAccount        = "system:serviceaccount:team-operator-system:team-operator-controller-manager"
+	MetricNamespaceSuffix    = "-team"
+	StagingLabel             = "staging"
+	ProductionLabel          = "production"
+	NameSpaceSkipLabel       = "snappcloud.io/pause-team-validation"
+	ServiceAccount           = "system:serviceaccount:team-operator-system:team-operator-controller-manager"
+	DefaultIAMTeamAPIURL     = "http://spcld-iam-main.snappcloud-unified-panel.svc:8080/api/teams"
+	DefaultIAMTeamAPITimeout = 5 * time.Second
 )
+
+type TeamWebhookOptions struct {
+	EnableIAMTeamAdminAccess bool
+	IAMTeamAPIURL            string
+	IAMTeamAPITimeout        time.Duration
+	IAMTeamHTTPClient        *http.Client
+}
+
+type iamTeam struct {
+	Name   string   `json:"name"`
+	Admins []string `json:"admins"`
+}
 
 func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(t).Complete()
@@ -86,7 +103,7 @@ func (t *teamValidator) ValidateCreate(obj *Team, currentUser string) error {
 		}
 
 		// Check If user has access to this namespace
-		err = teamAdminAccess(obj, clientSet, ns.Name, currentUser)
+		err = t.validateTeamAdminAccess(obj, clientSet, ns.Name, currentUser)
 		if err != nil {
 			return err
 		}
@@ -160,7 +177,7 @@ func (t *teamValidator) ValidateUpdate(obj *Team, currentUser string) error {
 			}
 
 			//Check If user has access to this namespace
-			err = teamAdminAccess(obj, clientSet, ns.Name, currentUser)
+			err = t.validateTeamAdminAccess(obj, clientSet, ns.Name, currentUser)
 			if err != nil {
 				errChan <- err
 			}
@@ -228,6 +245,42 @@ func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 	return nil
 }
 
+func (t *teamValidator) validateTeamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) error {
+	if t.enableIAMTeamAdminAccess {
+		return t.iamTeamAdminAccess(r, &c, ns, currentUser, func() error {
+			return teamAdminAccess(r, c, ns, currentUser)
+		})
+	}
+
+	return teamAdminAccess(r, c, ns, currentUser)
+}
+
+func (t *teamValidator) iamTeamAdminAccess(r *Team, c kubernetes.Interface, ns, currentUser string, fallback func() error) error {
+	if currentUser == ServiceAccount {
+		return nil
+	}
+
+	namespaceAllowed, errNamespaceAccess := userHasNamespaceAccess(c, ns, currentUser)
+	if errNamespaceAccess != nil {
+		return fmt.Errorf("user %s is not able to modify team %s. error: %v", currentUser, r.Name, errNamespaceAccess)
+	}
+
+	isIAMAdmin, errIAM := t.userIsIAMTeamAdmin(context.TODO(), r.Name, ns, currentUser)
+	if errIAM != nil {
+		teamlog.Error(errIAM, "iam team admin check failed, falling back to spec teamAdmins for testing stage", "team", r.Name, "namespace", ns, "user", currentUser)
+		if fallback != nil {
+			return fallback()
+		}
+		return errIAM
+	}
+
+	if namespaceAllowed && isIAMAdmin {
+		return nil
+	}
+
+	return fmt.Errorf("user %s is not allowed to edit team object, please add %s to IAM team admins", currentUser, currentUser)
+}
+
 func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) error {
 	var currentUserIsAdmin = false
 	var userIsClusterAdmin = false
@@ -290,20 +343,124 @@ func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) er
 		}
 	}
 	return nil
-
 }
 
-func NewMutatingWebhook(mgr manager.Manager) (*teamValidator, error) {
+func userHasNamespaceAccess(c kubernetes.Interface, ns, currentUser string) (bool, error) {
+	action := authv1.ResourceAttributes{
+		Namespace: ns,
+		Verb:      "create",
+		Resource:  "clusterrole",
+		Group:     "rbac.authorization.k8s.io",
+		Version:   "v1",
+	}
+	check := authv1.LocalSubjectAccessReview{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns},
+		Spec: authv1.SubjectAccessReviewSpec{
+			User:               currentUser,
+			ResourceAttributes: &action,
+		},
+	}
+
+	resp, errAuth := c.AuthorizationV1().
+		LocalSubjectAccessReviews(ns).
+		Create(context.TODO(), &check, metav1.CreateOptions{})
+	if errAuth != nil {
+		teamlog.Error(errAuth, "error happened while checking team owner permission", "namespace", ns, "user", currentUser)
+		return false, errAuth
+	}
+
+	return resp.Status.Allowed, nil
+}
+
+func (t *teamValidator) userIsIAMTeamAdmin(ctx context.Context, teamName, ns, currentUser string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, t.iamTeamAPITimeout)
+	defer cancel()
+
+	isAdmin, err := fetchIAMTeamAdmin(ctx, t.iamTeamHTTPClient, t.iamTeamAPIURL, teamName, currentUser)
+	if err != nil {
+		teamlog.Error(err, "failed to check IAM team admins", "team", teamName, "namespace", ns, "user", currentUser, "iamURL", t.iamTeamAPIURL)
+		return false, err
+	}
+
+	teamlog.Info("checked IAM team admin access", "team", teamName, "namespace", ns, "user", currentUser, "allowed", isAdmin)
+	return isAdmin, nil
+}
+
+func fetchIAMTeamAdmin(ctx context.Context, httpClient *http.Client, baseURL, teamName, currentUser string) (bool, error) {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	teamURL := strings.TrimRight(baseURL, "/") + "/" + url.PathEscape(teamName)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, teamURL, nil)
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return false, fmt.Errorf("IAM team API returned status %d for team %s", resp.StatusCode, teamName)
+	}
+
+	var team iamTeam
+	if err := json.NewDecoder(resp.Body).Decode(&team); err != nil {
+		return false, err
+	}
+
+	for _, admin := range team.Admins {
+		if admin == currentUser {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func NewMutatingWebhook(mgr manager.Manager, options ...TeamWebhookOptions) (*teamValidator, error) {
 	decoder, err := admission.NewDecoder(mgr.GetScheme())
 	if err != nil {
 		return nil, err
 	}
-	return &teamValidator{decoder: decoder, config: mgr.GetConfig()}, nil
+
+	opts := TeamWebhookOptions{
+		IAMTeamAPIURL:     DefaultIAMTeamAPIURL,
+		IAMTeamAPITimeout: DefaultIAMTeamAPITimeout,
+		IAMTeamHTTPClient: http.DefaultClient,
+	}
+	if len(options) > 0 {
+		opts = options[0]
+		if opts.IAMTeamAPIURL == "" {
+			opts.IAMTeamAPIURL = DefaultIAMTeamAPIURL
+		}
+		if opts.IAMTeamAPITimeout == 0 {
+			opts.IAMTeamAPITimeout = DefaultIAMTeamAPITimeout
+		}
+		if opts.IAMTeamHTTPClient == nil {
+			opts.IAMTeamHTTPClient = http.DefaultClient
+		}
+	}
+
+	return &teamValidator{
+		decoder:                  decoder,
+		config:                   mgr.GetConfig(),
+		enableIAMTeamAdminAccess: opts.EnableIAMTeamAdminAccess,
+		iamTeamAPIURL:            opts.IAMTeamAPIURL,
+		iamTeamAPITimeout:        opts.IAMTeamAPITimeout,
+		iamTeamHTTPClient:        opts.IAMTeamHTTPClient,
+	}, nil
 }
 
 type teamValidator struct {
-	decoder *admission.Decoder
-	config  *rest.Config
+	decoder                  *admission.Decoder
+	config                   *rest.Config
+	enableIAMTeamAdminAccess bool
+	iamTeamAPIURL            string
+	iamTeamAPITimeout        time.Duration
+	iamTeamHTTPClient        *http.Client
 }
 
 func (t *teamValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
