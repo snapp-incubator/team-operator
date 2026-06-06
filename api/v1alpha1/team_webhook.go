@@ -57,7 +57,6 @@ type TeamWebhookOptions struct {
 	EnableIAMTeamAdminAccess bool
 	IAMTeamAPIURL            string
 	IAMTeamAPITimeout        time.Duration
-	IAMTeamHTTPClient        *http.Client
 }
 
 type iamTeam struct {
@@ -397,7 +396,6 @@ func NewMutatingWebhook(mgr manager.Manager, options ...TeamWebhookOptions) (*te
 	opts := TeamWebhookOptions{
 		IAMTeamAPIURL:     DefaultIAMTeamAPIURL,
 		IAMTeamAPITimeout: DefaultIAMTeamAPITimeout,
-		IAMTeamHTTPClient: http.DefaultClient,
 	}
 	if len(options) > 0 {
 		opts = options[0]
@@ -407,9 +405,6 @@ func NewMutatingWebhook(mgr manager.Manager, options ...TeamWebhookOptions) (*te
 		if opts.IAMTeamAPITimeout == 0 {
 			opts.IAMTeamAPITimeout = DefaultIAMTeamAPITimeout
 		}
-		if opts.IAMTeamHTTPClient == nil {
-			opts.IAMTeamHTTPClient = http.DefaultClient
-		}
 	}
 
 	return &teamValidator{
@@ -418,7 +413,7 @@ func NewMutatingWebhook(mgr manager.Manager, options ...TeamWebhookOptions) (*te
 		enableIAMTeamAdminAccess: opts.EnableIAMTeamAdminAccess,
 		iamTeamAPIURL:            opts.IAMTeamAPIURL,
 		iamTeamAPITimeout:        opts.IAMTeamAPITimeout,
-		iamTeamHTTPClient:        opts.IAMTeamHTTPClient,
+		iamTeamHTTPClient:        http.DefaultClient,
 	}, nil
 }
 
