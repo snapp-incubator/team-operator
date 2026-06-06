@@ -8,12 +8,7 @@ import (
 	"testing"
 	"time"
 
-	authv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/fake"
-	k8stesting "k8s.io/client-go/testing"
 )
 
 const (
@@ -91,56 +86,43 @@ func TestIAMTeamAdminAccess(t *testing.T) {
 	}
 
 	tests := []struct {
-		name                   string
-		validator              *teamValidator
-		namespaceAccessAllowed bool
-		user                   string
-		wantErr                bool
+		name      string
+		validator *teamValidator
+		user      string
+		wantErr   bool
 	}{
 		{
-			name:                   "feature enabled ignores spec teamAdmins when IAM succeeds",
-			validator:              iamTestValidator(t, []string{iamTestOtherUser}, http.StatusOK),
-			namespaceAccessAllowed: true,
-			user:                   iamTestSpecOnlyUser,
-			wantErr:                true,
+			name:      "feature enabled ignores spec teamAdmins when IAM succeeds",
+			validator: iamTestValidator(t, []string{iamTestOtherUser}, http.StatusOK),
+			user:      iamTestSpecOnlyUser,
+			wantErr:   true,
 		},
 		{
-			name:                   "feature enabled allows IAM admins when namespace access passes",
-			validator:              iamTestValidator(t, []string{iamTestCurrentUser}, http.StatusOK),
-			namespaceAccessAllowed: true,
-			user:                   iamTestCurrentUser,
+			name:      "feature enabled allows IAM admins",
+			validator: iamTestValidator(t, []string{iamTestCurrentUser}, http.StatusOK),
+			user:      iamTestCurrentUser,
 		},
 		{
-			name:                   "feature enabled rejects IAM admins when namespace access fails",
-			validator:              iamTestValidator(t, []string{iamTestCurrentUser}, http.StatusOK),
-			namespaceAccessAllowed: false,
-			user:                   iamTestCurrentUser,
-			wantErr:                true,
+			name:      "feature enabled rejects members that are not admins",
+			validator: iamTestValidator(t, nil, http.StatusOK),
+			user:      iamTestCurrentUser,
+			wantErr:   true,
 		},
 		{
-			name:                   "feature enabled rejects members that are not admins",
-			validator:              iamTestValidator(t, nil, http.StatusOK),
-			namespaceAccessAllowed: true,
-			user:                   iamTestCurrentUser,
-			wantErr:                true,
+			name:      "IAM failure falls back to spec teamAdmins",
+			validator: iamTestValidator(t, nil, http.StatusInternalServerError),
+			user:      iamTestSpecOnlyUser,
 		},
 		{
-			name:                   "IAM failure falls back to spec teamAdmins",
-			validator:              iamTestValidator(t, nil, http.StatusInternalServerError),
-			namespaceAccessAllowed: false,
-			user:                   iamTestSpecOnlyUser,
-		},
-		{
-			name:                   "operator service account remains allowed",
-			validator:              iamTestValidator(t, nil, http.StatusInternalServerError),
-			namespaceAccessAllowed: false,
-			user:                   ServiceAccount,
+			name:      "operator service account remains allowed",
+			validator: iamTestValidator(t, nil, http.StatusInternalServerError),
+			user:      ServiceAccount,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.validator.iamTeamAdminAccess(team, clientSetWithNamespaceAccess(tt.namespaceAccessAllowed, nil), iamTestNamespace, tt.user, func() error {
+			err := tt.validator.iamTeamAdminAccess(team, iamTestNamespace, tt.user, func() error {
 				if tt.user == iamTestSpecOnlyUser {
 					return nil
 				}
@@ -181,19 +163,4 @@ func iamTestValidator(t *testing.T, admins []string, statusCode int) *teamValida
 		iamTeamAPITimeout:        time.Second,
 		iamTeamHTTPClient:        server.Client(),
 	}
-}
-
-func clientSetWithNamespaceAccess(allowed bool, err error) kubernetes.Interface {
-	clientSet := fake.NewSimpleClientset()
-	clientSet.Fake.PrependReactor("create", "localsubjectaccessreviews", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		if err != nil {
-			return true, nil, err
-		}
-		return true, &authv1.LocalSubjectAccessReview{
-			Status: authv1.SubjectAccessReviewStatus{
-				Allowed: allowed,
-			},
-		}, nil
-	})
-	return clientSet
 }

@@ -247,7 +247,7 @@ func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 
 func (t *teamValidator) validateTeamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) error {
 	if t.enableIAMTeamAdminAccess {
-		return t.iamTeamAdminAccess(r, &c, ns, currentUser, func() error {
+		return t.iamTeamAdminAccess(r, ns, currentUser, func() error {
 			return teamAdminAccess(r, c, ns, currentUser)
 		})
 	}
@@ -255,14 +255,9 @@ func (t *teamValidator) validateTeamAdminAccess(r *Team, c kubernetes.Clientset,
 	return teamAdminAccess(r, c, ns, currentUser)
 }
 
-func (t *teamValidator) iamTeamAdminAccess(r *Team, c kubernetes.Interface, ns, currentUser string, fallback func() error) error {
+func (t *teamValidator) iamTeamAdminAccess(r *Team, ns, currentUser string, fallback func() error) error {
 	if currentUser == ServiceAccount {
 		return nil
-	}
-
-	namespaceAllowed, errNamespaceAccess := userHasNamespaceAccess(c, ns, currentUser)
-	if errNamespaceAccess != nil {
-		return fmt.Errorf("user %s is not able to modify team %s. error: %v", currentUser, r.Name, errNamespaceAccess)
 	}
 
 	isIAMAdmin, errIAM := t.userIsIAMTeamAdmin(context.TODO(), r.Name, ns, currentUser)
@@ -274,7 +269,7 @@ func (t *teamValidator) iamTeamAdminAccess(r *Team, c kubernetes.Interface, ns, 
 		return errIAM
 	}
 
-	if namespaceAllowed && isIAMAdmin {
+	if isIAMAdmin {
 		return nil
 	}
 
@@ -343,33 +338,6 @@ func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) er
 		}
 	}
 	return nil
-}
-
-func userHasNamespaceAccess(c kubernetes.Interface, ns, currentUser string) (bool, error) {
-	action := authv1.ResourceAttributes{
-		Namespace: ns,
-		Verb:      "create",
-		Resource:  "clusterrole",
-		Group:     "rbac.authorization.k8s.io",
-		Version:   "v1",
-	}
-	check := authv1.LocalSubjectAccessReview{
-		ObjectMeta: metav1.ObjectMeta{Namespace: ns},
-		Spec: authv1.SubjectAccessReviewSpec{
-			User:               currentUser,
-			ResourceAttributes: &action,
-		},
-	}
-
-	resp, errAuth := c.AuthorizationV1().
-		LocalSubjectAccessReviews(ns).
-		Create(context.TODO(), &check, metav1.CreateOptions{})
-	if errAuth != nil {
-		teamlog.Error(errAuth, "error happened while checking team owner permission", "namespace", ns, "user", currentUser)
-		return false, errAuth
-	}
-
-	return resp.Status.Allowed, nil
 }
 
 func (t *teamValidator) userIsIAMTeamAdmin(ctx context.Context, teamName, ns, currentUser string) (bool, error) {
