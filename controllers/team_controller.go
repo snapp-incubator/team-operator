@@ -69,7 +69,7 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	team, errGetTeam, teamDeleted := t.GetTeamObj(ctx, req, loggerObj)
 	if errGetTeam != nil {
-		loggerObj.Error(errGetTeam, "failed to get team object", "team", team.GetName())
+		loggerObj.Error(errGetTeam, "failed to get team object", "team", req.Name)
 		return ctrl.Result{Requeue: true}, errGetTeam
 	} else if teamDeleted {
 		return ctrl.Result{}, nil
