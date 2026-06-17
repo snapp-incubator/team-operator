@@ -25,6 +25,7 @@ import (
 
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -225,6 +226,8 @@ func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&teamv1alpha1.Team{}).
+		Owns(&rbacv1.ClusterRole{}).
+		Owns(&rbacv1.ClusterRoleBinding{}).
 		Watches(
 			&source.Kind{Type: &corev1.Namespace{}},
 			handler.EnqueueRequestsFromMapFunc(mapFunc),

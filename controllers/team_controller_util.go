@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 func (t *TeamReconciler) AddTeamObjectFinalizer(ctx context.Context, team *teamv1alpha1.Team) error {
@@ -149,7 +150,7 @@ func (t *TeamReconciler) ensureTeamAdminRBAC(ctx context.Context, team *teamv1al
 			APIGroups:     []string{"team.snappcloud.io"},
 			Resources:     []string{"teams"},
 			ResourceNames: []string{team.Name},
-			Verbs:         []string{"get", "list", "patch", "update"},
+			Verbs:         []string{"get", "patch", "update"},
 		}}
 		return ctrl.SetControllerReference(team, cr, t.Scheme)
 	}); err != nil {
@@ -167,6 +168,8 @@ func (t *TeamReconciler) ensureTeamAdminRBAC(ctx context.Context, team *teamv1al
 					Namespace: parts[0],
 					Name:      parts[1],
 				})
+			} else {
+				log.FromContext(ctx).Info("skipping malformed serviceaccount admin name, expected format system:serviceaccount:<namespace>:<name>", "team", team.Name, "admin", admin.Name)
 			}
 		} else {
 			subjects = append(subjects, rbacv1.Subject{

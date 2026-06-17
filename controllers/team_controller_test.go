@@ -118,7 +118,7 @@ var _ = Describe("Testing Team", func() {
 			Expect(cr.Rules).To(HaveLen(1))
 			Expect(cr.Rules[0].Resources).To(ContainElement("teams"))
 			Expect(cr.Rules[0].ResourceNames).To(ContainElement(teamName))
-			Expect(cr.Rules[0].Verbs).To(ConsistOf("get", "list", "patch", "update"))
+			Expect(cr.Rules[0].Verbs).To(ConsistOf("get", "patch", "update"))
 			Expect(cr.OwnerReferences).To(HaveLen(1))
 			Expect(cr.OwnerReferences[0].Name).To(Equal(teamName))
 		})
