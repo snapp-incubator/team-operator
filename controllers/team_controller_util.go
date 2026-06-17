@@ -2,8 +2,11 @@ package controllers
 
 import (
 	"context"
+	"strings"
+
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -125,6 +128,66 @@ func (t *TeamReconciler) finalizeNamespace(ctx context.Context, deletedNamespace
 	team.Spec.Projects = desiredProjects
 
 	if err := t.Client.Update(ctx, team); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (t *TeamReconciler) ensureTeamAdminRBAC(ctx context.Context, team *teamv1alpha1.Team) error {
+	roleName := team.Name + "-team-clusterrole"
+	bindingName := team.Name + "-team-clusterrolebinding"
+	managedLabels := map[string]string{
+		"app.kubernetes.io/managed-by": "team-operator",
+		"team.snappcloud.io/team":      team.Name,
+	}
+
+	cr := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: roleName}}
+	if _, err := controllerutil.CreateOrUpdate(ctx, t.Client, cr, func() error {
+		cr.Labels = managedLabels
+		cr.Rules = []rbacv1.PolicyRule{{
+			APIGroups:     []string{"team.snappcloud.io"},
+			Resources:     []string{"teams"},
+			ResourceNames: []string{team.Name},
+			Verbs:         []string{"get", "list", "patch", "update"},
+		}}
+		return ctrl.SetControllerReference(team, cr, t.Scheme)
+	}); err != nil {
+		return err
+	}
+
+	subjects := make([]rbacv1.Subject, 0, len(team.Spec.TeamAdmins))
+	for _, admin := range team.Spec.TeamAdmins {
+		if strings.HasPrefix(admin.Name, "system:serviceaccount:") {
+			rest := strings.TrimPrefix(admin.Name, "system:serviceaccount:")
+			parts := strings.SplitN(rest, ":", 2)
+			if len(parts) == 2 {
+				subjects = append(subjects, rbacv1.Subject{
+					Kind:      "ServiceAccount",
+					Namespace: parts[0],
+					Name:      parts[1],
+				})
+			}
+		} else {
+			subjects = append(subjects, rbacv1.Subject{
+				Kind:     "User",
+				APIGroup: "rbac.authorization.k8s.io",
+				Name:     admin.Name,
+			})
+		}
+	}
+
+	crb := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: bindingName}}
+	if _, err := controllerutil.CreateOrUpdate(ctx, t.Client, crb, func() error {
+		crb.Labels = managedLabels
+		crb.RoleRef = rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     roleName,
+		}
+		crb.Subjects = subjects
+		return ctrl.SetControllerReference(team, crb, t.Scheme)
+	}); err != nil {
 		return err
 	}
 

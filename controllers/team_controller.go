@@ -62,6 +62,7 @@ type TeamReconciler struct {
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups="",resources=namespaces/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",resources=namespaces/finalizers,verbs=update
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 
 func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	loggerObj := log.FromContext(ctx)
@@ -90,6 +91,11 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if metricTeamErr != nil {
 		loggerObj.Error(metricTeamErr, "failed to create metric namespace", "team", team.GetName())
 		return ctrl.Result{}, metricTeamErr
+	}
+
+	if err := t.ensureTeamAdminRBAC(ctx, team); err != nil {
+		loggerObj.Error(err, "failed to ensure team admin RBAC", "team", team.GetName())
+		return ctrl.Result{}, err
 	}
 
 	// update Namespaces in Team Projects
