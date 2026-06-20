@@ -7,7 +7,7 @@ import (
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -52,7 +52,7 @@ func (t *TeamReconciler) CreateTeamMetricNS(ctx context.Context, req ctrl.Reques
 	if errGet != nil {
 		errCreate := t.Client.Create(ctx, metricTeamNS)
 		if errCreate != nil {
-			if !errors.IsAlreadyExists(errCreate) {
+			if !apierrors.IsAlreadyExists(errCreate) {
 				return errCreate
 			}
 		}
@@ -70,7 +70,7 @@ func (t *TeamReconciler) CreateTeamMetricNS(ctx context.Context, req ctrl.Reques
 	if !hasTeam {
 		errCreate := t.Client.Update(ctx, metricTeamNS)
 		if errCreate != nil {
-			if !errors.IsAlreadyExists(errCreate) {
+			if !apierrors.IsAlreadyExists(errCreate) {
 				return errCreate
 			}
 		}
@@ -88,7 +88,7 @@ func (t *TeamReconciler) DeleteTeamMetricNS(ctx context.Context, req ctrl.Reques
 	}
 	err := t.Client.Delete(ctx, metricTeamNS)
 	if err != nil {
-		if !errors.IsNotFound(err) {
+		if !apierrors.IsNotFound(err) {
 			return err
 		}
 	}
@@ -181,7 +181,7 @@ func (t *TeamReconciler) ensureTeamAdminRBAC(ctx context.Context, team *teamv1al
 	}
 
 	crb := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: bindingName}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, t.Client, crb, func() error {
+	_, err := controllerutil.CreateOrUpdate(ctx, t.Client, crb, func() error {
 		crb.Labels = managedLabels
 		crb.RoleRef = rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
@@ -190,7 +190,14 @@ func (t *TeamReconciler) ensureTeamAdminRBAC(ctx context.Context, team *teamv1al
 		}
 		crb.Subjects = subjects
 		return ctrl.SetControllerReference(team, crb, t.Scheme)
-	}); err != nil {
+	})
+	if err != nil {
+		if apierrors.IsInvalid(err) {
+			// RoleRef is immutable — delete so next reconcile recreates with correct ref
+			if deleteErr := t.Client.Delete(ctx, crb); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
+				return deleteErr
+			}
+		}
 		return err
 	}
 
