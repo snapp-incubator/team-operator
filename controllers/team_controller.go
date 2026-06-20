@@ -28,6 +28,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -96,8 +97,21 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	if err := t.ensureTeamAdminRBAC(ctx, team); err != nil {
 		loggerObj.Error(err, "failed to ensure team admin RBAC", "team", team.GetName())
+		apimeta.SetStatusCondition(&team.Status.Conditions, metav1.Condition{
+			Type:    "RBACReady",
+			Status:  metav1.ConditionFalse,
+			Reason:  "ReconcileFailed",
+			Message: err.Error(),
+		})
+		_ = t.Status().Update(ctx, team)
 		return ctrl.Result{}, err
 	}
+	apimeta.SetStatusCondition(&team.Status.Conditions, metav1.Condition{
+		Type:   "RBACReady",
+		Status: metav1.ConditionTrue,
+		Reason: "Reconciled",
+	})
+	_ = t.Status().Update(ctx, team)
 
 	// update Namespaces in Team Projects
 	for _, ns := range team.Spec.Projects {
