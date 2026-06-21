@@ -26,7 +26,6 @@ import (
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -103,7 +102,9 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			Reason:  "ReconcileFailed",
 			Message: err.Error(),
 		})
-		_ = t.Status().Update(ctx, team)
+		if statusErr := t.Status().Update(ctx, team); statusErr != nil {
+			loggerObj.Error(statusErr, "failed to update RBACReady status", "team", team.GetName())
+		}
 		return ctrl.Result{}, err
 	}
 	apimeta.SetStatusCondition(&team.Status.Conditions, metav1.Condition{
@@ -111,7 +112,9 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		Status: metav1.ConditionTrue,
 		Reason: "Reconciled",
 	})
-	_ = t.Status().Update(ctx, team)
+	if statusErr := t.Status().Update(ctx, team); statusErr != nil {
+		loggerObj.Error(statusErr, "failed to update RBACReady status", "team", team.GetName())
+	}
 
 	// update Namespaces in Team Projects
 	for _, ns := range team.Spec.Projects {
@@ -280,7 +283,7 @@ func (t *TeamReconciler) DeleteTeamIfRequired(ctx context.Context, req ctrl.Requ
 
 		// remove the Metric Namespace
 		errNSDeleted := t.DeleteTeamMetricNS(ctx, req)
-		if errNSDeleted != nil && !errors.IsNotFound(errNSDeleted) {
+		if errNSDeleted != nil && !apierrors.IsNotFound(errNSDeleted) {
 			return errNSDeleted
 		}
 
