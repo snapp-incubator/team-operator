@@ -140,7 +140,8 @@ func TestIAMTeamAdminAccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.validator.iamTeamAdminAccess(team, clientSetWithNamespaceAdminAccess(tt.namespaceAdminAccessAllowed, nil), iamTestNamespace, tt.user, func() error {
+			iam := tt.validator.lookupIAMTeamAdmin(team, tt.user)
+			err := tt.validator.iamTeamAdminAccess(team, clientSetWithNamespaceAdminAccess(tt.namespaceAdminAccessAllowed, nil), iamTestNamespace, tt.user, iam, func() error {
 				if tt.user == iamTestSpecOnlyUser {
 					return nil
 				}
@@ -153,6 +154,28 @@ func TestIAMTeamAdminAccess(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestIAMTeamAdminAccessFailClosed(t *testing.T) {
+	team := &Team{
+		ObjectMeta: metav1.ObjectMeta{Name: iamTestTeamName},
+		Spec: TeamSpec{
+			TeamAdmins: []Admin{{Name: iamTestSpecOnlyUser}},
+		},
+	}
+
+	// IAM is unreachable (500) and spec-admin fallback is disabled, so the request
+	// must fail closed even for a user listed in spec.TeamAdmins.
+	validator := iamTestValidator(t, nil, http.StatusInternalServerError)
+	validator.allowSpecAdminFallback = false
+
+	iam := validator.lookupIAMTeamAdmin(team, iamTestSpecOnlyUser)
+	err := validator.iamTeamAdminAccess(team, clientSetWithNamespaceAdminAccess(true, nil), iamTestNamespace, iamTestSpecOnlyUser, iam, func() error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected fail-closed error when IAM is unreachable and fallback is disabled")
 	}
 }
 
@@ -216,6 +239,7 @@ func iamTestValidator(t *testing.T, admins []string, statusCode int) *teamValida
 
 	return &teamValidator{
 		enableIAMTeamAdminAccess: true,
+		allowSpecAdminFallback:   true,
 		iamTeamAPIURL:            server.URL,
 		iamTeamAPITimeout:        time.Second,
 		iamTeamHTTPClient:        server.Client(),

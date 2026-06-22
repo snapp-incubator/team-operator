@@ -29,6 +29,7 @@ spec:
         args:
         - --leader-elect
         - --enable-iam-team-admin-access=false
+        - --iam-team-api-allow-spec-fallback=true
         - --iam-team-api-url=http://spcld-iam-main.snappcloud-unified-panel.svc:8080/api/teams
         - --iam-team-api-timeout=5s
         image: ghcr.io/snapp-incubator/team-operator:2.7.0

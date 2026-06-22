@@ -55,11 +55,13 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var enableIAMTeamAdminAccess bool
+	var allowSpecAdminFallback bool
 	var iamTeamAPIURL string
 	var iamTeamAPITimeout time.Duration
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableIAMTeamAdminAccess, "enable-iam-team-admin-access", false, "Use IAM team admins and namespace access for Team edit authorization.")
+	flag.BoolVar(&allowSpecAdminFallback, "iam-team-api-allow-spec-fallback", true, "When IAM authorization is enabled, fall back to spec.teamAdmins if the IAM API or namespace SubjectAccessReview is unreachable. Intended for the rollout stage; set to false to fail closed.")
 	flag.StringVar(&iamTeamAPIURL, "iam-team-api-url", teamv1alpha1.DefaultIAMTeamAPIURL, "Base URL for the IAM team API.")
 	flag.DurationVar(&iamTeamAPITimeout, "iam-team-api-timeout", teamv1alpha1.DefaultIAMTeamAPITimeout, "Timeout for IAM team API requests.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
@@ -72,7 +74,7 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-	setupLog.Info("configured IAM team admin access", "enabled", enableIAMTeamAdminAccess, "iamTeamAPIURL", iamTeamAPIURL, "iamTeamAPITimeout", iamTeamAPITimeout.String())
+	setupLog.Info("configured IAM team admin access", "enabled", enableIAMTeamAdminAccess, "allowSpecAdminFallback", allowSpecAdminFallback, "iamTeamAPIURL", iamTeamAPIURL, "iamTeamAPITimeout", iamTeamAPITimeout.String())
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -109,6 +111,7 @@ func main() {
 
 	teamValidator, errNewMutateWebhook := teamv1alpha1.NewMutatingWebhook(mgr, teamv1alpha1.TeamWebhookOptions{
 		EnableIAMTeamAdminAccess: enableIAMTeamAdminAccess,
+		AllowSpecAdminFallback:   allowSpecAdminFallback,
 		IAMTeamAPIURL:            iamTeamAPIURL,
 		IAMTeamAPITimeout:        iamTeamAPITimeout,
 	})
