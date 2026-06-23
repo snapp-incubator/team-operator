@@ -18,11 +18,14 @@ package v1alpha1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	authv1 "k8s.io/api/authorization/v1"
@@ -41,12 +44,39 @@ import (
 var teamlog = logf.Log.WithName("team-resource")
 
 const (
-	MetricNamespaceSuffix = "-team"
-	StagingLabel          = "staging"
-	ProductionLabel       = "production"
-	NameSpaceSkipLabel    = "snappcloud.io/pause-team-validation"
-	ServiceAccount        = "system:serviceaccount:team-operator-system:team-operator-controller-manager"
+	MetricNamespaceSuffix    = "-team"
+	StagingLabel             = "staging"
+	ProductionLabel          = "production"
+	NameSpaceSkipLabel       = "snappcloud.io/pause-team-validation"
+	ServiceAccount           = "system:serviceaccount:team-operator-system:team-operator-controller-manager"
+	DefaultIAMTeamAPIURL     = "http://spcld-iam-main.snappcloud-unified-panel.svc:8080/api/teams"
+	DefaultIAMTeamAPITimeout = 5 * time.Second
 )
+
+type TeamWebhookOptions struct {
+	EnableIAMTeamAdminAccess bool
+	IAMTeamAPIURL            string
+	IAMTeamAPITimeout        time.Duration
+	// AllowSpecAdminFallback, when true, falls back to the legacy spec.TeamAdmins
+	// authorization path whenever an authorization dependency (the IAM API or the
+	// namespace SubjectAccessReview) is unreachable. This is intended for the
+	// testing/rollout stage; set it to false to fail closed once IAM is the
+	// authoritative source of team admins.
+	AllowSpecAdminFallback bool
+}
+
+type iamTeam struct {
+	Name   string   `json:"name"`
+	Admins []string `json:"admins"`
+}
+
+// iamAdminLookup is the result of the namespace-independent IAM team-admin check.
+// It is resolved once per admission request and reused for every project so that a
+// team with N namespaces triggers a single IAM API call rather than N.
+type iamAdminLookup struct {
+	isAdmin bool
+	err     error
+}
 
 func (t *Team) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(t).Complete()
@@ -64,6 +94,11 @@ func (t *teamValidator) ValidateCreate(obj *Team, currentUser string) error {
 		teamlog.Error(err, "error happened while validating create", "namespace", obj.GetNamespace(), "name", obj.GetName())
 		return errors.New("could not create client, failed to update team object")
 	}
+
+	// IAM team-admin membership does not depend on the namespace, so resolve it
+	// once and reuse it for every project below.
+	iam := t.lookupIAMTeamAdmin(obj, currentUser)
+
 	for _, ns := range obj.Spec.Projects {
 		// Check if namespace has the label to be skipped by controller/webhook
 		shouldSkip, errSkip := nsSkips(clientSet, ns.Name, obj.Name)
@@ -86,7 +121,7 @@ func (t *teamValidator) ValidateCreate(obj *Team, currentUser string) error {
 		}
 
 		// Check If user has access to this namespace
-		err = teamAdminAccess(obj, clientSet, ns.Name, currentUser)
+		err = t.validateTeamAdminAccess(obj, clientSet, ns.Name, currentUser, iam)
 		if err != nil {
 			return err
 		}
@@ -129,6 +164,9 @@ func (t *teamValidator) ValidateUpdate(obj *Team, currentUser string) error {
 		}
 	}
 
+	// Resolve IAM team-admin membership once; the goroutines below only read it.
+	iam := t.lookupIAMTeamAdmin(obj, currentUser)
+
 	for _, ns := range obj.Spec.Projects {
 		wg.Add(1)
 		go func(ns Project) {
@@ -160,7 +198,7 @@ func (t *teamValidator) ValidateUpdate(obj *Team, currentUser string) error {
 			}
 
 			//Check If user has access to this namespace
-			err = teamAdminAccess(obj, clientSet, ns.Name, currentUser)
+			err = t.validateTeamAdminAccess(obj, clientSet, ns.Name, currentUser, iam)
 			if err != nil {
 				errChan <- err
 			}
@@ -228,6 +266,68 @@ func nsHasTeam(r *Team, tns *corev1.Namespace) (err error) {
 	return nil
 }
 
+// lookupIAMTeamAdmin performs the namespace-independent IAM team-admin check once
+// per admission request. The result is shared across every project of the team so a
+// team with N namespaces issues a single IAM API call. It returns the zero value
+// when IAM authorization is not in effect for the request (feature disabled or the
+// caller is the operator service account), in which case the lookup is unused.
+func (t *teamValidator) lookupIAMTeamAdmin(r *Team, currentUser string) iamAdminLookup {
+	if !t.enableIAMTeamAdminAccess || currentUser == ServiceAccount {
+		return iamAdminLookup{}
+	}
+	isAdmin, err := t.userIsIAMTeamAdmin(context.TODO(), r.Name, currentUser)
+	return iamAdminLookup{isAdmin: isAdmin, err: err}
+}
+
+func (t *teamValidator) validateTeamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string, iam iamAdminLookup) error {
+	if t.enableIAMTeamAdminAccess {
+		return t.iamTeamAdminAccess(r, &c, ns, currentUser, iam, func() error {
+			return teamAdminAccess(r, c, ns, currentUser)
+		})
+	}
+
+	return teamAdminAccess(r, c, ns, currentUser)
+}
+
+func (t *teamValidator) iamTeamAdminAccess(r *Team, c kubernetes.Interface, ns, currentUser string, iam iamAdminLookup, fallback func() error) error {
+	if currentUser == ServiceAccount {
+		return nil
+	}
+
+	// IAM membership was resolved once for this request (see lookupIAMTeamAdmin);
+	// the namespace admin check below is the only per-namespace work.
+	if iam.err != nil {
+		return t.handleIAMUnavailable(r, ns, currentUser, iam.err, fallback)
+	}
+
+	namespaceAdminAllowed, errNamespaceAdminAccess := userHasNamespaceAdminAccess(c, ns, currentUser)
+	if errNamespaceAdminAccess != nil {
+		return t.handleIAMUnavailable(r, ns, currentUser, errNamespaceAdminAccess, fallback)
+	}
+
+	if iam.isAdmin && namespaceAdminAllowed {
+		return nil
+	}
+
+	if iam.isAdmin {
+		return fmt.Errorf("user %s is IAM team admin but is not admin on namespace %s", currentUser, ns)
+	}
+
+	return fmt.Errorf("user %s is not allowed to edit team object, please add %s to IAM team admins", currentUser, currentUser)
+}
+
+// handleIAMUnavailable applies one consistent policy whenever an authorization
+// dependency (the IAM API or the namespace SubjectAccessReview) is unreachable:
+// fall back to the legacy spec.TeamAdmins path when AllowSpecAdminFallback is
+// enabled, otherwise fail closed and deny the request.
+func (t *teamValidator) handleIAMUnavailable(r *Team, ns, currentUser string, cause error, fallback func() error) error {
+	if t.allowSpecAdminFallback && fallback != nil {
+		teamlog.Error(cause, "IAM authorization unavailable; falling back to spec teamAdmins (allow-spec-admin-fallback enabled)", "team", r.Name, "namespace", ns, "user", currentUser)
+		return fallback()
+	}
+	return fmt.Errorf("user %s is not able to modify team %s: IAM authorization unavailable: %w", currentUser, r.Name, cause)
+}
+
 func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) error {
 	var currentUserIsAdmin = false
 	var userIsClusterAdmin = false
@@ -290,20 +390,122 @@ func teamAdminAccess(r *Team, c kubernetes.Clientset, ns, currentUser string) er
 		}
 	}
 	return nil
-
 }
 
-func NewMutatingWebhook(mgr manager.Manager) (*teamValidator, error) {
+func userHasNamespaceAdminAccess(c kubernetes.Interface, ns, currentUser string) (bool, error) {
+	action := authv1.ResourceAttributes{
+		Namespace: ns,
+		Verb:      "create",
+		Resource:  "rolebindings",
+		Group:     "rbac.authorization.k8s.io",
+		Version:   "v1",
+	}
+	check := authv1.LocalSubjectAccessReview{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns},
+		Spec: authv1.SubjectAccessReviewSpec{
+			User:               currentUser,
+			ResourceAttributes: &action,
+		},
+	}
+
+	resp, errAuth := c.AuthorizationV1().
+		LocalSubjectAccessReviews(ns).
+		Create(context.TODO(), &check, metav1.CreateOptions{})
+	if errAuth != nil {
+		teamlog.Error(errAuth, "error happened while checking namespace admin permission", "namespace", ns, "user", currentUser)
+		return false, errAuth
+	}
+
+	return resp.Status.Allowed, nil
+}
+
+func (t *teamValidator) userIsIAMTeamAdmin(ctx context.Context, teamName, currentUser string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, t.iamTeamAPITimeout)
+	defer cancel()
+
+	isAdmin, err := fetchIAMTeamAdmin(ctx, t.iamTeamHTTPClient, t.iamTeamAPIURL, teamName, currentUser)
+	if err != nil {
+		teamlog.Error(err, "failed to check IAM team admins", "team", teamName, "user", currentUser, "iamURL", t.iamTeamAPIURL)
+		return false, err
+	}
+
+	teamlog.Info("checked IAM team admin access", "team", teamName, "user", currentUser, "allowed", isAdmin)
+	return isAdmin, nil
+}
+
+func fetchIAMTeamAdmin(ctx context.Context, httpClient *http.Client, baseURL, teamName, currentUser string) (bool, error) {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	teamURL := strings.TrimRight(baseURL, "/") + "/" + url.PathEscape(teamName)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, teamURL, nil)
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return false, fmt.Errorf("IAM team API returned status %d for team %s", resp.StatusCode, teamName)
+	}
+
+	var team iamTeam
+	if err := json.NewDecoder(resp.Body).Decode(&team); err != nil {
+		return false, err
+	}
+
+	for _, admin := range team.Admins {
+		if admin == currentUser {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func NewMutatingWebhook(mgr manager.Manager, options ...TeamWebhookOptions) (*teamValidator, error) {
 	decoder, err := admission.NewDecoder(mgr.GetScheme())
 	if err != nil {
 		return nil, err
 	}
-	return &teamValidator{decoder: decoder, config: mgr.GetConfig()}, nil
+
+	opts := TeamWebhookOptions{
+		IAMTeamAPIURL:     DefaultIAMTeamAPIURL,
+		IAMTeamAPITimeout: DefaultIAMTeamAPITimeout,
+	}
+	if len(options) > 0 {
+		opts = options[0]
+		if opts.IAMTeamAPIURL == "" {
+			opts.IAMTeamAPIURL = DefaultIAMTeamAPIURL
+		}
+		if opts.IAMTeamAPITimeout == 0 {
+			opts.IAMTeamAPITimeout = DefaultIAMTeamAPITimeout
+		}
+	}
+
+	return &teamValidator{
+		decoder:                  decoder,
+		config:                   mgr.GetConfig(),
+		enableIAMTeamAdminAccess: opts.EnableIAMTeamAdminAccess,
+		allowSpecAdminFallback:   opts.AllowSpecAdminFallback,
+		iamTeamAPIURL:            opts.IAMTeamAPIURL,
+		iamTeamAPITimeout:        opts.IAMTeamAPITimeout,
+		iamTeamHTTPClient:        http.DefaultClient,
+	}, nil
 }
 
 type teamValidator struct {
-	decoder *admission.Decoder
-	config  *rest.Config
+	decoder                  *admission.Decoder
+	config                   *rest.Config
+	enableIAMTeamAdminAccess bool
+	allowSpecAdminFallback   bool
+	iamTeamAPIURL            string
+	iamTeamAPITimeout        time.Duration
+	iamTeamHTTPClient        *http.Client
 }
 
 func (t *teamValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
