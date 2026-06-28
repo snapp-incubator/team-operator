@@ -86,6 +86,9 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		loggerObj.Error(errHandleTeamDelete, "failed to delete team when deletionTimeStamp is not zero", "team", team.GetName())
 		return ctrl.Result{Requeue: true}, errHandleTeamDelete
 	}
+	if !team.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
 
 	errAddTeamFinalizer := t.AddTeamObjectFinalizer(ctx, team)
 	if errAddTeamFinalizer != nil {
