@@ -274,4 +274,35 @@ var _ = Describe("Testing Team", func() {
 			}))
 		})
 	})
+
+	Context("When team admin is a service account", func() {
+		saTeamObj := &v1alpha1.Team{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: teamNameSA,
+			},
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "team.snappcloud.io/v1alpha1",
+				Kind:       "Team",
+			},
+			Spec: v1alpha1.TeamSpec{
+				TeamAdmins: []v1alpha1.Admin{{Name: "system:serviceaccount:infra:my-sa"}},
+			},
+		}
+
+		It("should create ClusterRoleBinding with ServiceAccount subject", func() {
+			err := k8sClient.Create(ctx, saTeamObj)
+			if err != nil && !errors.IsAlreadyExists(err) {
+				Expect(err).To(BeNil())
+			}
+			time.Sleep(5 * time.Second)
+
+			crb := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: teamNameSA + "-team-clusterrolebinding"}, crb)).To(Succeed())
+			Expect(crb.Subjects).To(ContainElement(rbacv1.Subject{
+				Kind:      "ServiceAccount",
+				Namespace: "infra",
+				Name:      "my-sa",
+			}))
+		})
+	})
 })
