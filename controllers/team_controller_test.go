@@ -14,6 +14,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+const (
+	testTimeout  = 10 * time.Second
+	testInterval = 250 * time.Millisecond
+)
+
 var (
 	teamName   = "test-cloud"
 	teamAdmins = []v1alpha1.Admin{{Name: "user-test"}}
@@ -73,9 +78,9 @@ var _ = Describe("Testing Team", func() {
 			metricNSName := types.NamespacedName{
 				Name: teamName + MetricNamespaceSuffix,
 			}
-			time.Sleep(5 * time.Second)
-			err = k8sClient.Get(ctx, metricNSName, metricNS)
-			Expect(err).To(BeNil())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, metricNSName, metricNS)
+			}, testTimeout, testInterval).Should(Succeed())
 		})
 
 		It("all namespaces should have the team label and correct environment", func() {
@@ -102,13 +107,17 @@ var _ = Describe("Testing Team", func() {
 			errUpdateTeam := k8sClient.Update(ctx, updateTeam)
 			Expect(errUpdateTeam).To(BeNil())
 
-			time.Sleep(5 * time.Second)
 			for _, ns := range updateProjects {
+				nsCopy := ns
+				Eventually(func() string {
+					nsObj := &corev1.Namespace{}
+					_ = k8sClient.Get(ctx, types.NamespacedName{Name: nsCopy.Name}, nsObj)
+					return nsObj.Labels[MetaDataLabelEnv]
+				}, testTimeout, testInterval).Should(Equal(nsCopy.EnvLabel))
+
 				nsObj := &corev1.Namespace{}
-				errNS := k8sClient.Get(ctx, types.NamespacedName{Name: ns.Name}, nsObj)
-				Expect(errNS).To(BeNil())
-				Expect(nsObj.ObjectMeta.Labels["snappcloud.io/team"]).To(Equal(teamName))
-				Expect(nsObj.ObjectMeta.Labels[MetaDataLabelEnv]).To(Equal(ns.EnvLabel))
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsCopy.Name}, nsObj)).To(Succeed())
+				Expect(nsObj.Labels["snappcloud.io/team"]).To(Equal(teamName))
 			}
 		})
 
@@ -137,12 +146,11 @@ var _ = Describe("Testing Team", func() {
 		It("should delete metric namespace", func() {
 			err := k8sClient.Delete(ctx, validTeamObj)
 			Expect(err).To(BeNil())
-			time.Sleep(5 * time.Second)
-			metricNS := &corev1.Namespace{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: teamName + MetricNamespaceSuffix}, metricNS)
-			if err != nil || metricNS.Status.Phase != corev1.NamespaceTerminating {
-				Expect(err).NotTo(BeNil())
-			}
+			Eventually(func() bool {
+				metricNS := &corev1.Namespace{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: teamName + MetricNamespaceSuffix}, metricNS)
+				return errors.IsNotFound(err) || (err == nil && metricNS.Status.Phase == corev1.NamespaceTerminating)
+			}, testTimeout, testInterval).Should(BeTrue())
 		})
 	})
 
@@ -165,10 +173,11 @@ var _ = Describe("Testing Team", func() {
 			if err != nil && !errors.IsAlreadyExists(err) {
 				Expect(err).To(BeNil())
 			}
-			time.Sleep(5 * time.Second)
 
 			crb := &rbacv1.ClusterRoleBinding{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: teamNameSA + "-team-clusterrolebinding"}, crb)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: teamNameSA + "-team-clusterrolebinding"}, crb)
+			}, testTimeout, testInterval).Should(Succeed())
 			Expect(crb.Subjects).To(ContainElement(rbacv1.Subject{
 				Kind:      "ServiceAccount",
 				Namespace: "infra",

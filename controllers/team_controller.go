@@ -19,6 +19,8 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
@@ -53,8 +55,11 @@ const (
 // TeamReconciler reconciles a Team object
 type TeamReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Config *rest.Config
+	Scheme                   *runtime.Scheme
+	Config                   *rest.Config
+	EnableIAMTeamAdminAccess bool
+	IAMTeamAPIURL            string
+	IAMTeamAPITimeout        time.Duration
 }
 
 //+kubebuilder:rbac:groups=team.snappcloud.io,resources=teams,verbs=get;list;watch;create;update;patch;delete
@@ -94,26 +99,25 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, metricTeamErr
 	}
 
-	if err := t.ensureTeamAdminRBAC(ctx, team); err != nil {
-		loggerObj.Error(err, "failed to ensure team admin RBAC", "team", team.GetName())
-		apimeta.SetStatusCondition(&team.Status.Conditions, metav1.Condition{
+	rbacErr := t.ensureTeamAdminRBAC(ctx, team)
+	desired := metav1.Condition{Type: "RBACReady", Status: metav1.ConditionTrue, Reason: "Reconciled"}
+	if rbacErr != nil {
+		loggerObj.Error(rbacErr, "failed to ensure team admin RBAC", "team", team.GetName())
+		desired = metav1.Condition{
 			Type:    "RBACReady",
 			Status:  metav1.ConditionFalse,
 			Reason:  "ReconcileFailed",
-			Message: err.Error(),
-		})
+			Message: rbacErr.Error(),
+		}
+	}
+	if rbacConditionNeedsUpdate(team.Status.Conditions, desired) {
+		apimeta.SetStatusCondition(&team.Status.Conditions, desired)
 		if statusErr := t.Status().Update(ctx, team); statusErr != nil {
 			loggerObj.Error(statusErr, "failed to update RBACReady status", "team", team.GetName())
 		}
-		return ctrl.Result{}, err
 	}
-	apimeta.SetStatusCondition(&team.Status.Conditions, metav1.Condition{
-		Type:   "RBACReady",
-		Status: metav1.ConditionTrue,
-		Reason: "Reconciled",
-	})
-	if statusErr := t.Status().Update(ctx, team); statusErr != nil {
-		loggerObj.Error(statusErr, "failed to update RBACReady status", "team", team.GetName())
+	if rbacErr != nil {
+		return ctrl.Result{}, rbacErr
 	}
 
 	// update Namespaces in Team Projects

@@ -101,9 +101,12 @@ func main() {
 	}
 
 	if err = (&controllers.TeamReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Config: mgr.GetConfig(),
+		Client:                   mgr.GetClient(),
+		Scheme:                   mgr.GetScheme(),
+		Config:                   mgr.GetConfig(),
+		EnableIAMTeamAdminAccess: enableIAMTeamAdminAccess,
+		IAMTeamAPIURL:            iamTeamAPIURL,
+		IAMTeamAPITimeout:        iamTeamAPITimeout,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Team")
 		os.Exit(1)
