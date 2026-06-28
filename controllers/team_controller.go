@@ -100,14 +100,15 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	rbacErr := t.ensureTeamAdminRBAC(ctx, team)
-	desired := metav1.Condition{Type: "RBACReady", Status: metav1.ConditionTrue, Reason: "Reconciled"}
+	desired := metav1.Condition{Type: "RBACReady", Status: metav1.ConditionTrue, Reason: "Reconciled", ObservedGeneration: team.Generation}
 	if rbacErr != nil {
 		loggerObj.Error(rbacErr, "failed to ensure team admin RBAC", "team", team.GetName())
 		desired = metav1.Condition{
-			Type:    "RBACReady",
-			Status:  metav1.ConditionFalse,
-			Reason:  "ReconcileFailed",
-			Message: rbacErr.Error(),
+			Type:               "RBACReady",
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconcileFailed",
+			Message:            rbacErr.Error(),
+			ObservedGeneration: team.Generation,
 		}
 	}
 	if rbacConditionNeedsUpdate(team.Status.Conditions, desired) {

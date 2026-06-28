@@ -25,7 +25,8 @@ func rbacConditionNeedsUpdate(conditions []metav1.Condition, desired metav1.Cond
 	}
 	return existing.Status != desired.Status ||
 		existing.Reason != desired.Reason ||
-		existing.Message != desired.Message
+		existing.Message != desired.Message ||
+		existing.ObservedGeneration != desired.ObservedGeneration
 }
 
 func (t *TeamReconciler) AddTeamObjectFinalizer(ctx context.Context, team *teamv1alpha1.Team) error {
