@@ -143,9 +143,98 @@ var _ = Describe("Testing Team", func() {
 			}))
 		})
 
-		It("should delete metric namespace", func() {
+		It("should update CRB subjects when TeamAdmins is changed", func() {
+			team := &v1alpha1.Team{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: teamName}, team)).To(Succeed())
+			team.Spec.TeamAdmins = []v1alpha1.Admin{{Name: "updated-admin@example.com"}}
+			Expect(k8sClient.Update(ctx, team)).To(Succeed())
+
+			Eventually(func() []rbacv1.Subject {
+				crb := &rbacv1.ClusterRoleBinding{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrolebinding"}, crb); err != nil {
+					return nil
+				}
+				return crb.Subjects
+			}, testTimeout, testInterval).Should(ConsistOf(rbacv1.Subject{
+				Kind:     "User",
+				APIGroup: "rbac.authorization.k8s.io",
+				Name:     "updated-admin@example.com",
+			}))
+		})
+
+		It("should re-create CRB when it is deleted externally", func() {
+			crb := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrolebinding"}, crb)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, crb)).To(Succeed())
+
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrolebinding"}, &rbacv1.ClusterRoleBinding{})
+			}, testTimeout, testInterval).Should(Succeed())
+		})
+
+		It("should revert CRB subjects when modified externally", func() {
+			crb := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrolebinding"}, crb)).To(Succeed())
+			crb.Subjects = nil
+			Expect(k8sClient.Update(ctx, crb)).To(Succeed())
+
+			Eventually(func() []rbacv1.Subject {
+				fresh := &rbacv1.ClusterRoleBinding{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrolebinding"}, fresh); err != nil {
+					return nil
+				}
+				return fresh.Subjects
+			}, testTimeout, testInterval).Should(ContainElement(rbacv1.Subject{
+				Kind:     "User",
+				APIGroup: "rbac.authorization.k8s.io",
+				Name:     "updated-admin@example.com",
+			}))
+		})
+
+		It("should re-create CR when it is deleted externally", func() {
+			cr := &rbacv1.ClusterRole{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrole"}, cr)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, cr)).To(Succeed())
+
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrole"}, &rbacv1.ClusterRole{})
+			}, testTimeout, testInterval).Should(Succeed())
+		})
+
+		It("should revert CR rules when modified externally", func() {
+			cr := &rbacv1.ClusterRole{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrole"}, cr)).To(Succeed())
+			cr.Rules = nil
+			Expect(k8sClient.Update(ctx, cr)).To(Succeed())
+
+			Eventually(func() []rbacv1.PolicyRule {
+				fresh := &rbacv1.ClusterRole{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrole"}, fresh); err != nil {
+					return nil
+				}
+				return fresh.Rules
+			}, testTimeout, testInterval).Should(ContainElement(rbacv1.PolicyRule{
+				APIGroups:     []string{"team.snappcloud.io"},
+				Resources:     []string{"teams"},
+				ResourceNames: []string{teamName},
+				Verbs:         []string{"get", "patch", "update"},
+			}))
+		})
+
+		It("should delete CRB, CR and metric namespace when Team is deleted", func() {
 			err := k8sClient.Delete(ctx, validTeamObj)
 			Expect(err).To(BeNil())
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrolebinding"}, &rbacv1.ClusterRoleBinding{})
+				return errors.IsNotFound(err)
+			}, testTimeout, testInterval).Should(BeTrue())
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: teamName + "-team-clusterrole"}, &rbacv1.ClusterRole{})
+				return errors.IsNotFound(err)
+			}, testTimeout, testInterval).Should(BeTrue())
+
 			Eventually(func() bool {
 				metricNS := &corev1.Namespace{}
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: teamName + MetricNamespaceSuffix}, metricNS)

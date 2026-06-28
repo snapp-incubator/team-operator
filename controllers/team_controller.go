@@ -291,6 +291,15 @@ func (t *TeamReconciler) DeleteTeamIfRequired(ctx context.Context, req ctrl.Requ
 			return errNSDeleted
 		}
 
+		crb := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: team.Name + "-team-clusterrolebinding"}}
+		if err := t.Client.Delete(ctx, crb); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		cr := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: team.Name + "-team-clusterrole"}}
+		if err := t.Client.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+
 		// remove the team finalizer
 		errNSDeleteFinalizer := t.DeleteTeamObjectFinalizer(ctx, team)
 		if errNSDeleteFinalizer != nil {
