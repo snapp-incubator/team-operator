@@ -19,16 +19,19 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	iamsdk "gitlab.snapp.ir/platform/iam-sdk/go"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -100,14 +103,32 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.TeamReconciler{
+	teamReconciler := &controllers.TeamReconciler{
 		Client:                   mgr.GetClient(),
 		Scheme:                   mgr.GetScheme(),
 		Config:                   mgr.GetConfig(),
 		EnableIAMTeamAdminAccess: enableIAMTeamAdminAccess,
 		IAMTeamAPIURL:            iamTeamAPIURL,
 		IAMTeamAPITimeout:        iamTeamAPITimeout,
-	}).SetupWithManager(mgr); err != nil {
+	}
+
+	// When IAM authorization is enabled, wire the real-time admin watch: an IAM
+	// SDK client (built from the host root — the SDK appends /api itself) plus a
+	// buffered trigger channel fed by the per-team watch goroutines. Left nil
+	// otherwise, which makes the watch a no-op.
+	if enableIAMTeamAdminAccess {
+		baseURL := strings.TrimSuffix(iamTeamAPIURL, "/api/teams")
+		sdkClient, sdkErr := iamsdk.New(baseURL)
+		if sdkErr != nil {
+			setupLog.Error(sdkErr, "unable to build IAM SDK client for admin watch", "baseURL", baseURL)
+			os.Exit(1)
+		}
+		teamReconciler.IAMSDKClient = sdkClient
+		teamReconciler.ExternalTriggerCh = make(chan event.GenericEvent, 64)
+		setupLog.Info("IAM admin watch enabled (real-time CRB sync)", "baseURL", baseURL)
+	}
+
+	if err = teamReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Team")
 		os.Exit(1)
 	}
