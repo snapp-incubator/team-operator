@@ -119,6 +119,10 @@ test-api: manifests generate fmt vet envtest ## Run tests.
 build: generate fmt vet ## Build manager binary.
 	go build -o bin/manager main.go
 
+.PHONY: build-iam
+build-iam: generate fmt vet ## Build with real-time IAM admin watch (Snapp internal). Requires go.work pointing to the IAM SDK — copy go.work.example and set your local path.
+	go build -tags iam -o bin/manager main.go
+
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./main.go

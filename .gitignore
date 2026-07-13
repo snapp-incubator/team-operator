@@ -24,3 +24,8 @@ Dockerfile.cross
 *.swp
 *.swo
 *~
+
+# Go workspace files — each developer sets their own local path to the IAM SDK.
+# Never committed; see go.work.example.
+go.work
+go.work.sum

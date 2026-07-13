@@ -1,0 +1,16 @@
+go 1.26
+
+use .
+
+// Copy this file to go.work (which is gitignored) and set the correct path to
+// the IAM SDK on your machine. go.work is never committed to the repo.
+// Only needed when building with -tags iam (i.e. make build-iam).
+//
+// Option A — SDK is a sibling directory:
+//   use ../iam/iam-sdk/go
+//
+// Option B — SDK is somewhere else (replace directive):
+//   replace gitlab.snapp.ir/platform/iam-sdk/go => /absolute/path/to/iam-sdk/go
+//
+// After setting your path, add the SDK requirement to go.mod:
+//   go get gitlab.snapp.ir/platform/iam-sdk/go
