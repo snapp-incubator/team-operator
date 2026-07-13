@@ -27,7 +27,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
-	iamsdk "gitlab.snapp.ir/platform/iam-sdk/go"
+	"github.com/snapp-incubator/team-operator/internal/iam"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -71,7 +71,7 @@ type TeamReconciler struct {
 	// controller via source.Channel to trigger an immediate reconcile. The
 	// reconcile re-fetches the authoritative admin list, so events are pure
 	// triggers.
-	IAMSDKClient      *iamsdk.Client
+	IAMWatcher        iam.AdminWatcher
 	ExternalTriggerCh chan event.GenericEvent
 	watchCancel       sync.Map        // teamName → context.CancelFunc
 	rootCtx           context.Context // manager-tied parent for all watch goroutines
@@ -312,7 +312,7 @@ func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // ensureAdminWatch starts a per-team IAM admin watch goroutine if the feature is
 // enabled, an SDK client is configured, and one is not already running.
 func (t *TeamReconciler) ensureAdminWatch(team *teamv1alpha1.Team) {
-	if !t.EnableIAMTeamAdminAccess || t.IAMSDKClient == nil || t.ExternalTriggerCh == nil {
+	if !t.EnableIAMTeamAdminAccess || t.IAMWatcher == nil || t.ExternalTriggerCh == nil {
 		return
 	}
 	if _, running := t.watchCancel.Load(team.Name); running {
@@ -343,7 +343,7 @@ func (t *TeamReconciler) stopAdminWatch(teamName string) {
 // loop ends only when ctx is cancelled (team deleted or manager stopped).
 func (t *TeamReconciler) watchIAMAdmins(ctx context.Context, teamName string) {
 	defer t.watchCancel.Delete(teamName) // allow a restart after the stream ends
-	ch := t.IAMSDKClient.Teams.WatchAdmins(ctx, teamName)
+	ch := t.IAMWatcher.WatchAdmins(ctx, teamName)
 	for {
 		select {
 		case <-ctx.Done():

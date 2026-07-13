@@ -26,7 +26,6 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	iamsdk "gitlab.snapp.ir/platform/iam-sdk/go"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -38,6 +37,7 @@ import (
 
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	"github.com/snapp-incubator/team-operator/controllers"
+	"github.com/snapp-incubator/team-operator/internal/iam"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -118,12 +118,12 @@ func main() {
 	// otherwise, which makes the watch a no-op.
 	if enableIAMTeamAdminAccess {
 		baseURL := strings.TrimSuffix(iamTeamAPIURL, "/api/teams")
-		sdkClient, sdkErr := iamsdk.New(baseURL)
-		if sdkErr != nil {
-			setupLog.Error(sdkErr, "unable to build IAM SDK client for admin watch", "baseURL", baseURL)
+		watcher, watchErr := iam.NewWatcher(baseURL)
+		if watchErr != nil {
+			setupLog.Error(watchErr, "unable to build IAM admin watcher", "baseURL", baseURL)
 			os.Exit(1)
 		}
-		teamReconciler.IAMSDKClient = sdkClient
+		teamReconciler.IAMWatcher = watcher
 		teamReconciler.ExternalTriggerCh = make(chan event.GenericEvent, 64)
 		setupLog.Info("IAM admin watch enabled (real-time CRB sync)", "baseURL", baseURL)
 	}

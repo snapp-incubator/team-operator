@@ -6,16 +6,11 @@ require (
 	github.com/go-logr/logr v1.2.3
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.19.0
-	gitlab.snapp.ir/platform/iam-sdk/go v0.0.0-00010101000000-000000000000
 	k8s.io/api v0.25.0
 	k8s.io/apimachinery v0.25.0
 	k8s.io/client-go v0.25.0
 	sigs.k8s.io/controller-runtime v0.13.0
 )
-
-// The IAM SDK is a sibling module in the local workspace. For CI/production,
-// replace this with a tagged version from the GitLab module proxy.
-replace gitlab.snapp.ir/platform/iam-sdk/go => ../iam/iam-sdk/go
 
 require (
 	cloud.google.com/go v0.97.0 // indirect
