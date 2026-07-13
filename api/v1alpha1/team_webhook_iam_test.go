@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snapp-incubator/team-operator/internal/iam"
 	authv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -68,12 +69,19 @@ func TestIAMFetchTeamAdmin(t *testing.T) {
 			server := httptest.NewServer(tt.handler)
 			defer server.Close()
 
-			allowed, err := fetchIAMTeamAdmin(context.TODO(), server.Client(), server.URL, iamTestTeamName, iamTestCurrentUser)
+			admins, err := iam.FetchTeamAdmins(context.TODO(), server.Client(), server.URL, iamTestTeamName)
 			if tt.wantErr && err == nil {
 				t.Fatal("expected error")
 			}
 			if !tt.wantErr && err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+			allowed := false
+			for _, a := range admins {
+				if a == iamTestCurrentUser {
+					allowed = true
+					break
+				}
 			}
 			if allowed != tt.wantAllowed {
 				t.Fatalf("expected allowed %t, got %t", tt.wantAllowed, allowed)

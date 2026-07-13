@@ -19,14 +19,19 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
+	"github.com/snapp-incubator/team-operator/internal/iam"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -34,8 +39,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -52,8 +59,22 @@ const (
 // TeamReconciler reconciles a Team object
 type TeamReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Config *rest.Config
+	Scheme                   *runtime.Scheme
+	Config                   *rest.Config
+	EnableIAMTeamAdminAccess bool
+	IAMTeamAPIURL            string
+	IAMTeamAPITimeout        time.Duration
+
+	// Real-time IAM admin → CRB sync. When EnableIAMTeamAdminAccess is set and an
+	// IAM SDK client is provided, each team gets a watch goroutine that streams
+	// admin changes from IAM and feeds ExternalTriggerCh, which is wired into the
+	// controller via source.Channel to trigger an immediate reconcile. The
+	// reconcile re-fetches the authoritative admin list, so events are pure
+	// triggers.
+	IAMWatcher        iam.AdminWatcher
+	ExternalTriggerCh chan event.GenericEvent
+	watchCancel       sync.Map        // teamName → context.CancelFunc
+	rootCtx           context.Context // manager-tied parent for all watch goroutines
 }
 
 //+kubebuilder:rbac:groups=team.snappcloud.io,resources=teams,verbs=get;list;watch;create;update;patch;delete
@@ -62,15 +83,17 @@ type TeamReconciler struct {
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups="",resources=namespaces/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",resources=namespaces/finalizers,verbs=update
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 
 func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	loggerObj := log.FromContext(ctx)
 
 	team, errGetTeam, teamDeleted := t.GetTeamObj(ctx, req, loggerObj)
 	if errGetTeam != nil {
-		loggerObj.Error(errGetTeam, "failed to get team object", "team", team.GetName())
+		loggerObj.Error(errGetTeam, "failed to get team object", "team", req.Name)
 		return ctrl.Result{Requeue: true}, errGetTeam
 	} else if teamDeleted {
+		t.stopAdminWatch(req.Name)
 		return ctrl.Result{}, nil
 	}
 
@@ -79,6 +102,14 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		loggerObj.Error(errHandleTeamDelete, "failed to delete team when deletionTimeStamp is not zero", "team", team.GetName())
 		return ctrl.Result{Requeue: true}, errHandleTeamDelete
 	}
+	if !team.DeletionTimestamp.IsZero() {
+		t.stopAdminWatch(team.Name)
+		return ctrl.Result{}, nil
+	}
+
+	// Start (or keep) the IAM admin watch so an admin change in IAM triggers an
+	// immediate reconcile. No-op unless the feature + SDK client are configured.
+	t.ensureAdminWatch(team)
 
 	errAddTeamFinalizer := t.AddTeamObjectFinalizer(ctx, team)
 	if errAddTeamFinalizer != nil {
@@ -90,6 +121,28 @@ func (t *TeamReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if metricTeamErr != nil {
 		loggerObj.Error(metricTeamErr, "failed to create metric namespace", "team", team.GetName())
 		return ctrl.Result{}, metricTeamErr
+	}
+
+	rbacErr := t.ensureTeamAdminRBAC(ctx, team)
+	desired := metav1.Condition{Type: "RBACReady", Status: metav1.ConditionTrue, Reason: "Reconciled", ObservedGeneration: team.Generation}
+	if rbacErr != nil {
+		loggerObj.Error(rbacErr, "failed to ensure team admin RBAC", "team", team.GetName())
+		desired = metav1.Condition{
+			Type:               "RBACReady",
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconcileFailed",
+			Message:            rbacErr.Error(),
+			ObservedGeneration: team.Generation,
+		}
+	}
+	if rbacConditionNeedsUpdate(team.Status.Conditions, desired) {
+		apimeta.SetStatusCondition(&team.Status.Conditions, desired)
+		if statusErr := t.Status().Update(ctx, team); statusErr != nil {
+			loggerObj.Error(statusErr, "failed to update RBACReady status", "team", team.GetName())
+		}
+	}
+	if rbacErr != nil {
+		return ctrl.Result{}, rbacErr
 	}
 
 	// update Namespaces in Team Projects
@@ -217,14 +270,97 @@ func (t *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return requests
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	// Root all per-team watch goroutines in the manager's lifecycle: capture the
+	// manager's stop context and cancel every watch when it fires, so goroutines
+	// don't leak past mgr.Stop().
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		t.rootCtx = ctx
+		<-ctx.Done()
+		t.watchCancel.Range(func(_, v any) bool {
+			v.(context.CancelFunc)()
+			return true
+		})
+		return nil
+	})); err != nil {
+		return err
+	}
+
+	controller := ctrl.NewControllerManagedBy(mgr).
 		For(&teamv1alpha1.Team{}).
+		Owns(&rbacv1.ClusterRole{}).
+		Owns(&rbacv1.ClusterRoleBinding{}).
 		Watches(
 			&source.Kind{Type: &corev1.Namespace{}},
 			handler.EnqueueRequestsFromMapFunc(mapFunc),
 			builder.WithPredicates(labelPredicate),
-		).
-		Complete(t)
+		)
+
+	// External trigger channel: IAM admin-watch goroutines push a GenericEvent
+	// naming the changed team here; source.Channel turns it into a reconcile.
+	if t.ExternalTriggerCh != nil {
+		controller = controller.Watches(
+			&source.Channel{Source: t.ExternalTriggerCh},
+			handler.EnqueueRequestsFromMapFunc(func(obj client.Object) []reconcile.Request {
+				return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: obj.GetName()}}}
+			}),
+		)
+	}
+
+	return controller.Complete(t)
+}
+
+// ensureAdminWatch starts a per-team IAM admin watch goroutine if the feature is
+// enabled, an SDK client is configured, and one is not already running.
+func (t *TeamReconciler) ensureAdminWatch(team *teamv1alpha1.Team) {
+	if !t.EnableIAMTeamAdminAccess || t.IAMWatcher == nil || t.ExternalTriggerCh == nil {
+		return
+	}
+	if _, running := t.watchCancel.Load(team.Name); running {
+		return
+	}
+	parent := t.rootCtx
+	if parent == nil {
+		// The manager Runnable hasn't set rootCtx yet (a reconcile raced ahead of
+		// it). Fall back to Background; the next reconcile will root it properly.
+		parent = context.Background()
+	}
+	wctx, cancel := context.WithCancel(parent)
+	t.watchCancel.Store(team.Name, cancel)
+	go t.watchIAMAdmins(wctx, team.Name)
+}
+
+// stopAdminWatch cancels and forgets a team's watch goroutine (on deletion).
+func (t *TeamReconciler) stopAdminWatch(teamName string) {
+	if c, ok := t.watchCancel.LoadAndDelete(teamName); ok {
+		c.(context.CancelFunc)()
+	}
+}
+
+// watchIAMAdmins subscribes to IAM admin events for a team and turns each event
+// into an immediate reconcile trigger. It re-fetches the authoritative admin
+// list during reconcile, so events are pure triggers — a dropped/duplicated
+// event never causes drift. The SDK handles reconnect + resync internally; this
+// loop ends only when ctx is cancelled (team deleted or manager stopped).
+func (t *TeamReconciler) watchIAMAdmins(ctx context.Context, teamName string) {
+	defer t.watchCancel.Delete(teamName) // allow a restart after the stream ends
+	ch := t.IAMWatcher.WatchAdmins(ctx, teamName)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+			select {
+			case t.ExternalTriggerCh <- event.GenericEvent{
+				Object: &teamv1alpha1.Team{ObjectMeta: metav1.ObjectMeta{Name: teamName}},
+			}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
 }
 
 // GetTeamObj returns the team object, error and a bool that indicates if team has been removed
@@ -257,8 +393,17 @@ func (t *TeamReconciler) DeleteTeamIfRequired(ctx context.Context, req ctrl.Requ
 
 		// remove the Metric Namespace
 		errNSDeleted := t.DeleteTeamMetricNS(ctx, req)
-		if errNSDeleted != nil && !errors.IsNotFound(errNSDeleted) {
+		if errNSDeleted != nil && !apierrors.IsNotFound(errNSDeleted) {
 			return errNSDeleted
+		}
+
+		crb := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: team.Name + "-team-clusterrolebinding"}}
+		if err := t.Client.Delete(ctx, crb); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		cr := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: team.Name + "-team-clusterrole"}}
+		if err := t.Client.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
+			return err
 		}
 
 		// remove the team finalizer

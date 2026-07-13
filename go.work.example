@@ -1,0 +1,12 @@
+go 1.26
+
+use .
+
+// Copy this file to go.work (which is gitignored) and point it at your local
+// SDK checkout. Only needed for make build-iam.
+//
+// Option A — SDK is a sibling directory:
+//   use ../iam/iam-sdk/go
+//
+// Option B — SDK is elsewhere (absolute path):
+//   replace gitlab.snapp.ir/platform/iam-sdk/go => /absolute/path/to/iam-sdk/go

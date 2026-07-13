@@ -18,14 +18,14 @@ package v1alpha1
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/snapp-incubator/team-operator/internal/iam"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	authv1 "k8s.io/api/authorization/v1"
@@ -63,11 +63,6 @@ type TeamWebhookOptions struct {
 	// testing/rollout stage; set it to false to fail closed once IAM is the
 	// authoritative source of team admins.
 	AllowSpecAdminFallback bool
-}
-
-type iamTeam struct {
-	Name   string   `json:"name"`
-	Admins []string `json:"admins"`
 }
 
 // iamAdminLookup is the result of the namespace-independent IAM team-admin check.
@@ -423,47 +418,19 @@ func (t *teamValidator) userIsIAMTeamAdmin(ctx context.Context, teamName, curren
 	ctx, cancel := context.WithTimeout(ctx, t.iamTeamAPITimeout)
 	defer cancel()
 
-	isAdmin, err := fetchIAMTeamAdmin(ctx, t.iamTeamHTTPClient, t.iamTeamAPIURL, teamName, currentUser)
+	admins, err := iam.FetchTeamAdmins(ctx, t.iamTeamHTTPClient, t.iamTeamAPIURL, teamName)
 	if err != nil {
 		teamlog.Error(err, "failed to check IAM team admins", "team", teamName, "user", currentUser, "iamURL", t.iamTeamAPIURL)
 		return false, err
 	}
 
-	teamlog.Info("checked IAM team admin access", "team", teamName, "user", currentUser, "allowed", isAdmin)
-	return isAdmin, nil
-}
-
-func fetchIAMTeamAdmin(ctx context.Context, httpClient *http.Client, baseURL, teamName, currentUser string) (bool, error) {
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-
-	teamURL := strings.TrimRight(baseURL, "/") + "/" + url.PathEscape(teamName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, teamURL, nil)
-	if err != nil {
-		return false, err
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return false, fmt.Errorf("IAM team API returned status %d for team %s", resp.StatusCode, teamName)
-	}
-
-	var team iamTeam
-	if err := json.NewDecoder(resp.Body).Decode(&team); err != nil {
-		return false, err
-	}
-
-	for _, admin := range team.Admins {
+	for _, admin := range admins {
 		if admin == currentUser {
+			teamlog.Info("checked IAM team admin access", "team", teamName, "user", currentUser, "allowed", true)
 			return true, nil
 		}
 	}
+	teamlog.Info("checked IAM team admin access", "team", teamName, "user", currentUser, "allowed", false)
 	return false, nil
 }
 

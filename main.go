@@ -19,6 +19,7 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -29,12 +30,14 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	teamv1alpha1 "github.com/snapp-incubator/team-operator/api/v1alpha1"
 	"github.com/snapp-incubator/team-operator/controllers"
+	"github.com/snapp-incubator/team-operator/internal/iam"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -100,11 +103,32 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.TeamReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Config: mgr.GetConfig(),
-	}).SetupWithManager(mgr); err != nil {
+	teamReconciler := &controllers.TeamReconciler{
+		Client:                   mgr.GetClient(),
+		Scheme:                   mgr.GetScheme(),
+		Config:                   mgr.GetConfig(),
+		EnableIAMTeamAdminAccess: enableIAMTeamAdminAccess,
+		IAMTeamAPIURL:            iamTeamAPIURL,
+		IAMTeamAPITimeout:        iamTeamAPITimeout,
+	}
+
+	// When IAM authorization is enabled, wire the real-time admin watch: an IAM
+	// SDK client (built from the host root — the SDK appends /api itself) plus a
+	// buffered trigger channel fed by the per-team watch goroutines. Left nil
+	// otherwise, which makes the watch a no-op.
+	if enableIAMTeamAdminAccess {
+		baseURL := strings.TrimSuffix(iamTeamAPIURL, "/api/teams")
+		watcher, watchErr := iam.NewWatcher(baseURL)
+		if watchErr != nil {
+			setupLog.Error(watchErr, "unable to build IAM admin watcher", "baseURL", baseURL)
+			os.Exit(1)
+		}
+		teamReconciler.IAMWatcher = watcher
+		teamReconciler.ExternalTriggerCh = make(chan event.GenericEvent, 64)
+		setupLog.Info("IAM admin watch enabled (real-time CRB sync)", "baseURL", baseURL)
+	}
+
+	if err = teamReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Team")
 		os.Exit(1)
 	}

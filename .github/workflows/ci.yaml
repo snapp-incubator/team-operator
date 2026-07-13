@@ -22,12 +22,16 @@ jobs:
           with:
             version: latest
             args: --timeout 5m --out-format colored-line-number
-  
+
     test:
       name: test
       runs-on: ubuntu-latest
       steps:
         - uses: actions/checkout@v3
+        - uses: actions/setup-go@v4
+          with:
+            go-version: '1.21'
+            cache: false
         - name: run tests using make
           run: make test
     docker:
