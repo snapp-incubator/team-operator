@@ -33,7 +33,8 @@ workspace once:
 
 ```bash
 cp go.work.example go.work
-# Edit go.work and set the path that matches your local checkout of the SDK
+# Edit go.work and set the path that matches your local checkout of the SDK.
+# No go get needed — go.mod already has the require.
 ```
 
 Then build with:
